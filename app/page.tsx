@@ -132,6 +132,20 @@ export default function Home() {
             const displayValue1 = formatCellForDisplay(cellObj1);
             const displayValue2 = formatCellForDisplay(cellObj2);
 
+            // Skip if values are very long text (likely filter descriptions or metadata)
+            const str1 = String(displayValue1);
+            const str2 = String(displayValue2);
+
+            // Skip if either value contains "Applied filters:" or is very long multi-line text
+            if (
+              str1.includes("Applied filters:") ||
+              str2.includes("Applied filters:") ||
+              str1.length > 200 ||
+              str2.length > 200
+            ) {
+              return;
+            }
+
             foundDifferences.push({
               sheet: sheetName,
               cell,
