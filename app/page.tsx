@@ -148,10 +148,17 @@ type CellDifference = {
 
 type CleanupRule = {
   id: string;
-  type: "replace" | "prefix" | "suffix";
+  type:
+    | "replace"
+    | "prefix"
+    | "suffix"
+    | "trim"
+    | "capitalize"
+    | "uppercase"
+    | "lowercase";
   find: string;
   replace: string;
-  applyTo: "all" | "fullName" | "nationality" | "position" | "remarks";
+  applyTo: string; // Will be dynamic based on available columns
   enabled: boolean;
 };
 
@@ -367,6 +374,27 @@ export default function AirportReportsTools() {
             if (!cleaned.endsWith(rule.find)) {
               cleaned = cleaned + rule.find;
             }
+            break;
+
+          case "trim":
+            cleaned = cleaned.trim();
+            break;
+
+          case "capitalize":
+            // Capitalize first letter of each word
+            cleaned = cleaned
+              .toLowerCase()
+              .split(" ")
+              .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+              .join(" ");
+            break;
+
+          case "uppercase":
+            cleaned = cleaned.toUpperCase();
+            break;
+
+          case "lowercase":
+            cleaned = cleaned.toLowerCase();
             break;
         }
       });
@@ -1887,6 +1915,16 @@ export default function AirportReportsTools() {
                               <SelectItem value="replace">
                                 Find & Replace
                               </SelectItem>
+                              <SelectItem value="trim">Trim Spaces</SelectItem>
+                              <SelectItem value="capitalize">
+                                Capitalize Words
+                              </SelectItem>
+                              <SelectItem value="uppercase">
+                                UPPERCASE
+                              </SelectItem>
+                              <SelectItem value="lowercase">
+                                lowercase
+                              </SelectItem>
                               <SelectItem value="prefix">Add Prefix</SelectItem>
                               <SelectItem value="suffix">Add Suffix</SelectItem>
                             </SelectContent>
@@ -1912,102 +1950,142 @@ export default function AirportReportsTools() {
                             </SelectTrigger>
                             <SelectContent>
                               <SelectItem value="all">All Fields</SelectItem>
-                              <SelectItem value="fullName">
-                                Full Name
-                              </SelectItem>
-                              <SelectItem value="nationality">
-                                Nationality
-                              </SelectItem>
-                              <SelectItem value="position">Position</SelectItem>
-                              <SelectItem value="remarks">Remarks</SelectItem>
+                              {columns.map((col) => (
+                                <SelectItem key={col} value={col}>
+                                  {col}
+                                </SelectItem>
+                              ))}
                             </SelectContent>
                           </Select>
                         </div>
                       </div>
 
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        <div className="space-y-2">
-                          <Label className="text-xs">
-                            {rule.type === "replace"
-                              ? "Find (supports *)"
-                              : rule.type === "prefix"
-                              ? "Prefix"
-                              : "Suffix"}
-                          </Label>
-                          <Input
-                            value={rule.find}
-                            onChange={(e) => {
-                              setCleanupRules((prev) =>
-                                prev.map((r) =>
-                                  r.id === rule.id
-                                    ? { ...r, find: e.target.value }
-                                    : r
-                                )
-                              );
-                            }}
-                            placeholder={
-                              rule.type === "replace"
-                                ? "e.g., Ministerial*"
-                                : "e.g., Mr. "
-                            }
-                            className="text-sm"
-                          />
-                        </div>
-
-                        {rule.type === "replace" && (
+                      {/* Only show input fields for types that need them */}
+                      {(rule.type === "replace" ||
+                        rule.type === "prefix" ||
+                        rule.type === "suffix") && (
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                           <div className="space-y-2">
-                            <Label className="text-xs">Replace With</Label>
+                            <Label className="text-xs">
+                              {rule.type === "replace"
+                                ? "Find (supports *)"
+                                : rule.type === "prefix"
+                                ? "Prefix"
+                                : "Suffix"}
+                            </Label>
                             <Input
-                              value={rule.replace}
+                              value={rule.find}
                               onChange={(e) => {
                                 setCleanupRules((prev) =>
                                   prev.map((r) =>
                                     r.id === rule.id
-                                      ? { ...r, replace: e.target.value }
+                                      ? { ...r, find: e.target.value }
                                       : r
                                   )
                                 );
                               }}
-                              placeholder="e.g., Ministerial"
+                              placeholder={
+                                rule.type === "replace"
+                                  ? "e.g., Ministerial*"
+                                  : "e.g., Mr. "
+                              }
                               className="text-sm"
                             />
                           </div>
-                        )}
-                      </div>
+
+                          {rule.type === "replace" && (
+                            <div className="space-y-2">
+                              <Label className="text-xs">Replace With</Label>
+                              <Input
+                                value={rule.replace}
+                                onChange={(e) => {
+                                  setCleanupRules((prev) =>
+                                    prev.map((r) =>
+                                      r.id === rule.id
+                                        ? { ...r, replace: e.target.value }
+                                        : r
+                                    )
+                                  );
+                                }}
+                                placeholder="e.g., Ministerial"
+                                className="text-sm"
+                              />
+                            </div>
+                          )}
+                        </div>
+                      )}
 
                       {/* Example */}
-                      {rule.find && (
+                      {(rule.type === "replace" ||
+                        rule.type === "prefix" ||
+                        rule.type === "suffix") &&
+                        rule.find && (
+                          <div className="text-xs bg-gray-50 p-2 rounded border">
+                            <span className="text-gray-600">Example: </span>
+                            {rule.type === "replace" && (
+                              <span>
+                                "
+                                <span className="line-through text-red-600">
+                                  {rule.find.replace(/\*/g, "xyz")}
+                                </span>
+                                " → "
+                                <span className="text-green-600">
+                                  {rule.replace}
+                                </span>
+                                "
+                              </span>
+                            )}
+                            {rule.type === "prefix" && (
+                              <span>
+                                "John" → "
+                                <span className="text-green-600">
+                                  {rule.find}John
+                                </span>
+                                "
+                              </span>
+                            )}
+                            {rule.type === "suffix" && (
+                              <span>
+                                "John" → "
+                                <span className="text-green-600">
+                                  John{rule.find}
+                                </span>
+                                "
+                              </span>
+                            )}
+                          </div>
+                        )}
+
+                      {/* Examples for transformation rules */}
+                      {(rule.type === "trim" ||
+                        rule.type === "capitalize" ||
+                        rule.type === "uppercase" ||
+                        rule.type === "lowercase") && (
                         <div className="text-xs bg-gray-50 p-2 rounded border">
                           <span className="text-gray-600">Example: </span>
-                          {rule.type === "replace" && (
+                          {rule.type === "trim" && (
                             <span>
-                              "
-                              <span className="line-through text-red-600">
-                                {rule.find.replace(/\*/g, "xyz")}
-                              </span>
+                              "<span className="bg-yellow-100"> John Doe </span>
                               " → "
-                              <span className="text-green-600">
-                                {rule.replace}
-                              </span>
-                              "
+                              <span className="text-green-600">John Doe</span>"
                             </span>
                           )}
-                          {rule.type === "prefix" && (
+                          {rule.type === "capitalize" && (
                             <span>
-                              "John" → "
-                              <span className="text-green-600">
-                                {rule.find}John
-                              </span>
-                              "
+                              "<span className="text-red-600">john doe</span>" →
+                              "<span className="text-green-600">John Doe</span>"
                             </span>
                           )}
-                          {rule.type === "suffix" && (
+                          {rule.type === "uppercase" && (
                             <span>
-                              "John" → "
-                              <span className="text-green-600">
-                                John{rule.find}
-                              </span>
-                              "
+                              "<span className="text-red-600">John Doe</span>" →
+                              "<span className="text-green-600">JOHN DOE</span>"
+                            </span>
+                          )}
+                          {rule.type === "lowercase" && (
+                            <span>
+                              "<span className="text-red-600">John Doe</span>" →
+                              "<span className="text-green-600">john doe</span>"
                             </span>
                           )}
                         </div>
@@ -2046,11 +2124,19 @@ export default function AirportReportsTools() {
                     wildcard in Find & Replace (e.g., "Ministerial*" matches
                     "Ministerial123")
                   </li>
+                  <li>
+                    • Transformation rules (Trim, Capitalize, UPPERCASE,
+                    lowercase) don't need input values
+                  </li>
                   <li>• Rules are applied in order from top to bottom</li>
                   <li>• Disable rules temporarily using the toggle switch</li>
                   <li>
                     • Prefix/Suffix rules only add text if it's not already
                     present
+                  </li>
+                  <li>
+                    • Apply rules to "All Fields" or select specific columns
+                    from your Excel file
                   </li>
                 </ul>
               </div>
