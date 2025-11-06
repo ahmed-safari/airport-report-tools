@@ -184,6 +184,7 @@ export default function AirportReportsTools() {
   const [showExportModal, setShowExportModal] = useState(false);
   const [showCleanupModal, setShowCleanupModal] = useState(false);
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
+  const [settingsSaved, setSettingsSaved] = useState(false);
 
   // Processing states
   const [mode, setMode] = useState<"arrival" | "departure">("arrival");
@@ -241,6 +242,82 @@ export default function AirportReportsTools() {
   const [file2, setFile2] = useState<File | null>(null);
   const [differences, setDifferences] = useState<CellDifference[]>([]);
   const [comparisonComplete, setComparisonComplete] = useState(false);
+
+  // ============================================================================
+  // LOCAL STORAGE PERSISTENCE
+  // ============================================================================
+
+  // Load settings from localStorage on mount
+  useEffect(() => {
+    try {
+      const savedMode = localStorage.getItem("airportTools_mode");
+      const savedMessageConfig = localStorage.getItem(
+        "airportTools_messageConfig"
+      );
+      const savedExportConfig = localStorage.getItem(
+        "airportTools_exportConfig"
+      );
+      const savedCleanupRules = localStorage.getItem(
+        "airportTools_cleanupRules"
+      );
+
+      if (savedMode) {
+        setMode(savedMode as "arrival" | "departure");
+      }
+      if (savedMessageConfig) {
+        setMessageConfig(JSON.parse(savedMessageConfig));
+      }
+      if (savedExportConfig) {
+        setExportConfig(JSON.parse(savedExportConfig));
+      }
+      if (savedCleanupRules) {
+        setCleanupRules(JSON.parse(savedCleanupRules));
+      }
+    } catch (error) {
+      console.error("Error loading settings from localStorage:", error);
+    }
+  }, []);
+
+  // Save mode to localStorage
+  useEffect(() => {
+    localStorage.setItem("airportTools_mode", mode);
+    setSettingsSaved(true);
+    const timer = setTimeout(() => setSettingsSaved(false), 2000);
+    return () => clearTimeout(timer);
+  }, [mode]);
+
+  // Save messageConfig to localStorage
+  useEffect(() => {
+    localStorage.setItem(
+      "airportTools_messageConfig",
+      JSON.stringify(messageConfig)
+    );
+    setSettingsSaved(true);
+    const timer = setTimeout(() => setSettingsSaved(false), 2000);
+    return () => clearTimeout(timer);
+  }, [messageConfig]);
+
+  // Save exportConfig to localStorage
+  useEffect(() => {
+    localStorage.setItem(
+      "airportTools_exportConfig",
+      JSON.stringify(exportConfig)
+    );
+    setSettingsSaved(true);
+    const timer = setTimeout(() => setSettingsSaved(false), 2000);
+    return () => clearTimeout(timer);
+  }, [exportConfig]);
+
+  // Save cleanupRules to localStorage
+  useEffect(() => {
+    localStorage.setItem(
+      "airportTools_cleanupRules",
+      JSON.stringify(cleanupRules)
+    );
+    setSettingsSaved(true);
+    const timer = setTimeout(() => setSettingsSaved(false), 2000);
+    return () => clearTimeout(timer);
+  }, [cleanupRules]);
 
   // ============================================================================
   // EXCEL PROCESSING FUNCTIONS
@@ -898,9 +975,39 @@ export default function AirportReportsTools() {
               Airport Report Tools
             </h1>
           </div>
-          <p className="text-gray-600 text-sm sm:text-base">
-            Professional Excel processing with advanced customization
-          </p>
+          <div className="flex items-center justify-center gap-3">
+            <p className="text-gray-600 text-sm sm:text-base">
+              Professional Excel processing with advanced customization
+            </p>
+            {settingsSaved && (
+              <div className="flex items-center gap-1 text-xs text-green-600 animate-fade-in">
+                <Check className="h-3 w-3" />
+                <span>Saved</span>
+              </div>
+            )}
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => {
+                if (
+                  confirm(
+                    "Are you sure you want to reset all settings to default? This will clear your custom templates, cleanup rules, and preferences."
+                  )
+                ) {
+                  localStorage.removeItem("airportTools_mode");
+                  localStorage.removeItem("airportTools_messageConfig");
+                  localStorage.removeItem("airportTools_exportConfig");
+                  localStorage.removeItem("airportTools_cleanupRules");
+                  window.location.reload();
+                }
+              }}
+              className="text-xs text-gray-500 hover:text-gray-700"
+              title="Reset all settings to default"
+            >
+              <X className="h-3 w-3 mr-1" />
+              Reset Settings
+            </Button>
+          </div>
         </div>
 
         {/* Main Card */}
