@@ -413,7 +413,7 @@ export default function AirportReportsTools() {
 
   const applyCleanupRules = (
     value: string,
-    field: keyof ColumnMapping
+    field: keyof ColumnMapping | string
   ): string => {
     if (!value || typeof value !== "string") return value;
 
@@ -423,6 +423,8 @@ export default function AirportReportsTools() {
       .filter((rule) => rule.enabled)
       .forEach((rule) => {
         // Check if rule applies to this field
+        // If applyTo is "all", apply to everything
+        // If applyTo matches the field name, apply it
         if (rule.applyTo !== "all" && rule.applyTo !== field) {
           return;
         }
@@ -526,15 +528,22 @@ export default function AirportReportsTools() {
       const groups: Record<string, any[]> = {};
 
       filteredData.forEach((row) => {
-        const flight = flightField ? row[flightField] || "TBD" : "TBD";
+        const flight = applyCleanupRules(
+          flightField ? row[flightField] || "TBD" : "TBD",
+          flightField || "flight"
+        );
         const nationality = applyCleanupRules(
           columnMapping.nationality ? row[columnMapping.nationality] || "" : "",
-          "nationality"
+          columnMapping.nationality || "nationality"
         );
-        const terminal = columnMapping.terminal
-          ? row[columnMapping.terminal] || "VIP"
-          : "VIP";
-        const hotel = columnMapping.hotel ? row[columnMapping.hotel] || "" : "";
+        const terminal = applyCleanupRules(
+          columnMapping.terminal ? row[columnMapping.terminal] || "VIP" : "VIP",
+          columnMapping.terminal || "terminal"
+        );
+        const hotel = applyCleanupRules(
+          columnMapping.hotel ? row[columnMapping.hotel] || "" : "",
+          columnMapping.hotel || "hotel"
+        );
 
         const key = `${flight}|${nationality}|${terminal}|${hotel}`;
 
@@ -587,15 +596,15 @@ export default function AirportReportsTools() {
             columnMapping.fullName
               ? row[columnMapping.fullName] || "N/A"
               : "N/A",
-            "fullName"
+            columnMapping.fullName || "fullName"
           ),
           position: applyCleanupRules(
             columnMapping.position ? row[columnMapping.position] || "" : "",
-            "position"
+            columnMapping.position || "position"
           ),
           remarks: applyCleanupRules(
             columnMapping.remarks ? row[columnMapping.remarks] || "" : "",
-            "remarks"
+            columnMapping.remarks || "remarks"
           ),
         }));
 
