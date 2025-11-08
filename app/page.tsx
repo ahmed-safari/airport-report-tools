@@ -429,16 +429,13 @@ export default function AirportReportsTools() {
 
         switch (rule.type) {
           case "replace":
-            // Support for wildcards (*)
-            if (rule.find.includes("*")) {
-              const pattern = rule.find.replace(/\*/g, ".*");
-              const regex = new RegExp(pattern, "gi");
-              cleaned = cleaned.replace(regex, rule.replace);
-            } else {
-              // Simple string replacement
-              const regex = new RegExp(rule.find, "gi");
-              cleaned = cleaned.replace(regex, rule.replace);
-            }
+            // Escape special regex characters in the find string to treat them literally
+            const escapedFind = rule.find.replace(
+              /[.*+?^${}()|[\]\\]/g,
+              "\\$&"
+            );
+            const regex = new RegExp(escapedFind, "gi");
+            cleaned = cleaned.replace(regex, rule.replace);
             break;
 
           case "prefix":
@@ -2075,7 +2072,7 @@ export default function AirportReportsTools() {
                           <div className="space-y-2">
                             <Label className="text-xs">
                               {rule.type === "replace"
-                                ? "Find (supports *)"
+                                ? "Find Text"
                                 : rule.type === "prefix"
                                 ? "Prefix"
                                 : "Suffix"}
@@ -2133,7 +2130,7 @@ export default function AirportReportsTools() {
                               <span>
                                 "
                                 <span className="line-through text-red-600">
-                                  {rule.find.replace(/\*/g, "xyz")}
+                                  {rule.find}
                                 </span>
                                 " → "
                                 <span className="text-green-600">
@@ -2227,9 +2224,8 @@ export default function AirportReportsTools() {
                 <p className="font-semibold text-blue-900 mb-1">Tips:</p>
                 <ul className="text-blue-800 space-y-1 text-xs">
                   <li>
-                    • Use <code className="bg-blue-100 px-1 rounded">*</code> as
-                    wildcard in Find & Replace (e.g., "Ministerial*" matches
-                    "Ministerial123")
+                    • Find & Replace matches exact text (e.g., "Ministerial*"
+                    will match literal asterisks)
                   </li>
                   <li>
                     • Transformation rules (Trim, Capitalize, UPPERCASE,
