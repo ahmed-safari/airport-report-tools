@@ -5,6 +5,7 @@
 
 import { useState, useMemo, useEffect } from "react";
 import * as XLSX from "xlsx";
+import { logUsage } from "@/lib/logger";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -338,6 +339,13 @@ export default function AirportReportsTools() {
 
         // Auto-detect columns
         autoDetectColumns(cols);
+
+        // Log file upload
+        logUsage("File Upload", file.name, {
+          rowCount: jsonData.length,
+          columnCount: cols.length,
+          columns: cols,
+        });
       }
     } catch (err) {
       setError(
@@ -769,6 +777,14 @@ export default function AirportReportsTools() {
 
       setProcessedMessages(messages);
       setShowPreviewModal(true);
+
+      // Log message generation
+      logUsage("Generate Messages", excelFile?.name, {
+        mode,
+        messageCount: messages.length,
+        date: selectedDate,
+        useCustomTemplate: messageConfig.useCustomTemplate,
+      });
     } catch (err) {
       setError(
         "Failed to process messages. Please check your column mappings."
@@ -861,6 +877,17 @@ export default function AirportReportsTools() {
     }
 
     setShowExportModal(false);
+
+    // Log export
+    logUsage("Export Messages", excelFile?.name, {
+      exportFormat: exportConfig.exportFormat,
+      groupBy: exportConfig.groupBy,
+      messageCount: messagesToExport.length,
+      fileCount:
+        exportConfig.exportFormat === "single"
+          ? 1
+          : Object.keys(grouped).length,
+    });
   };
 
   // ============================================================================
@@ -954,6 +981,14 @@ export default function AirportReportsTools() {
 
       setDifferences(foundDifferences);
       setComparisonComplete(true);
+
+      // Log comparison
+      logUsage("Compare Files", `${file1.name} vs ${file2.name}`, {
+        file1: file1.name,
+        file2: file2.name,
+        differencesFound: foundDifferences.length,
+        sheetsCompared: workbook1.SheetNames.length,
+      });
     } catch (err) {
       setError(
         "Error comparing files. Please ensure both files are valid Excel files."
