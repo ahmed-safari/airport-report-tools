@@ -106,6 +106,12 @@ type MessageTemplate = {
   template: string;
 };
 
+type SavedColumnMapping = {
+  id: string;
+  name: string;
+  mapping: ColumnMapping;
+};
+
 type ExportConfig = {
   groupBy: "date" | "terminal" | "flight" | "nationality";
   exportFormat: "single" | "individual";
@@ -146,6 +152,19 @@ type CellDifference = {
   file1Value: any;
   file2Value: any;
 };
+
+// Default template constant
+const DEFAULT_CUSTOM_TEMPLATE = `🛬 {{header}}
+
+👥 Passenger(s):
+{{passengers}}
+
+🌍 Delegation: {{nationality}}
+✈️ Flight: {{flight}} | {{time}}
+🏢 Terminal: {{terminal}}
+🏨 Hotel: {{hotel}}
+💼 Luggage: {{baggage}}
+📝 Remarks: {{remarks}}`;
 
 type CleanupRule = {
   id: string;
@@ -201,17 +220,7 @@ export default function AirportReportsTools() {
     includeHotel: true,
     includeBaggage: true,
     includeRemarks: true,
-    customTemplate: `🛬 {{header}}
-
-👥 Passenger(s): {{passengerCount}}
-{{passengers}}
-
-🌍 Delegation: {{nationality}}
-✈️ {{flightTime}}
-🏢 Terminal: {{terminal}}
-🏨 Hotel: {{hotel}}
-💼 Luggage: {{baggage}}
-📝 Remarks: {{remarks}}`,
+    customTemplate: DEFAULT_CUSTOM_TEMPLATE,
     useCustomTemplate: false,
   });
 
@@ -231,6 +240,12 @@ export default function AirportReportsTools() {
       enabled: true,
     },
   ]);
+
+  // Saved column mapping templates
+  const [savedColumnMappings, setSavedColumnMappings] = useState<
+    SavedColumnMapping[]
+  >([]);
+  const [newMappingName, setNewMappingName] = useState("");
 
   // Results
   const [processedMessages, setProcessedMessages] = useState<
@@ -261,6 +276,9 @@ export default function AirportReportsTools() {
       const savedCleanupRules = localStorage.getItem(
         "airportTools_cleanupRules"
       );
+      const savedColumnMappingsData = localStorage.getItem(
+        "airportTools_savedColumnMappings"
+      );
 
       if (savedMode) {
         setMode(savedMode as "arrival" | "departure");
@@ -273,6 +291,9 @@ export default function AirportReportsTools() {
       }
       if (savedCleanupRules) {
         setCleanupRules(JSON.parse(savedCleanupRules));
+      }
+      if (savedColumnMappingsData) {
+        setSavedColumnMappings(JSON.parse(savedColumnMappingsData));
       }
     } catch (error) {
       console.error("Error loading settings from localStorage:", error);
@@ -319,6 +340,39 @@ export default function AirportReportsTools() {
     const timer = setTimeout(() => setSettingsSaved(false), 2000);
     return () => clearTimeout(timer);
   }, [cleanupRules]);
+
+  // Save savedColumnMappings to localStorage
+  useEffect(() => {
+    localStorage.setItem(
+      "airportTools_savedColumnMappings",
+      JSON.stringify(savedColumnMappings)
+    );
+  }, [savedColumnMappings]);
+
+  // ============================================================================
+  // COLUMN MAPPING TEMPLATE FUNCTIONS
+  // ============================================================================
+
+  const saveCurrentColumnMapping = () => {
+    if (!newMappingName.trim()) return;
+
+    const newMapping: SavedColumnMapping = {
+      id: Date.now().toString(),
+      name: newMappingName.trim(),
+      mapping: { ...columnMapping },
+    };
+
+    setSavedColumnMappings((prev) => [...prev, newMapping]);
+    setNewMappingName("");
+  };
+
+  const loadColumnMapping = (savedMapping: SavedColumnMapping) => {
+    setColumnMapping(savedMapping.mapping);
+  };
+
+  const deleteColumnMapping = (id: string) => {
+    setSavedColumnMappings((prev) => prev.filter((m) => m.id !== id));
+  };
 
   // ============================================================================
   // EXCEL PROCESSING FUNCTIONS
@@ -614,6 +668,16 @@ export default function AirportReportsTools() {
             columnMapping.remarks ? row[columnMapping.remarks] || "" : "",
             columnMapping.remarks || "remarks"
           ),
+          documentNumber: applyCleanupRules(
+            columnMapping.documentNumber
+              ? row[columnMapping.documentNumber] || ""
+              : "",
+            columnMapping.documentNumber || "documentNumber"
+          ),
+          category: applyCleanupRules(
+            columnMapping.category ? row[columnMapping.category] || "" : "",
+            columnMapping.category || "category"
+          ),
         }));
 
         // Build message using custom template or default
@@ -649,12 +713,51 @@ export default function AirportReportsTools() {
             passengers.length.toString()
           );
 
+          // Passengers with full details
+          const passengersDetailedList = passengers
+            .map((p: any, idx: number) => {
+              let line = `${idx + 1}) ${p.name}`;
+              if (p.position) line += ` - ${p.position}`;
+              if (p.documentNumber) line += ` | Doc: ${p.documentNumber}`;
+              if (p.category) line += ` | Cat: ${p.category}`;
+              return line;
+            })
+            .join("\n");
+          template = template.replace(
+            /\{\{passengersDetailed\}\}/g,
+            passengersDetailedList
+          );
+
           // Individual passenger details
           const passengerNames = passengers.map((p: any) => p.name).join(", ");
           template = template.replace(
             /\{\{passengerNames\}\}/g,
             passengerNames
           );
+
+          // Positions list
+          const positions = passengers
+            .filter((p: any) => p.position)
+            .map((p: any) => p.position)
+            .join(", ");
+          template = template.replace(/\{\{positions\}\}/g, positions || "-");
+
+          // Document numbers
+          const documentNumbers = passengers
+            .filter((p: any) => p.documentNumber)
+            .map((p: any) => `${p.name}: ${p.documentNumber}`)
+            .join("\n");
+          template = template.replace(
+            /\{\{documentNumbers\}\}/g,
+            documentNumbers || "-"
+          );
+
+          // Categories
+          const categories = [
+            ...new Set(passengers.map((p: any) => p.category).filter(Boolean)),
+          ].join(", ");
+          template = template.replace(/\{\{category\}\}/g, categories || "-");
+          template = template.replace(/\{\{categories\}\}/g, categories || "-");
 
           // Nationality/Delegation
           template = template.replace(
@@ -1576,6 +1679,80 @@ export default function AirportReportsTools() {
 
             <ScrollArea className="h-[60vh] pr-2 sm:pr-4">
               <div className="space-y-3 sm:space-y-4">
+                {/* Saved Mapping Templates Section */}
+                <div className="bg-gray-50 rounded-lg p-4 space-y-3">
+                  <Label className="text-sm font-semibold flex items-center gap-2">
+                    <FileText className="h-4 w-4" />
+                    Saved Mapping Templates
+                  </Label>
+
+                  {/* Load existing templates */}
+                  {savedColumnMappings.length > 0 && (
+                    <div className="space-y-2">
+                      {savedColumnMappings.map((savedMapping) => (
+                        <div
+                          key={savedMapping.id}
+                          className="flex items-center justify-between bg-white rounded-md p-2 border"
+                        >
+                          <span className="text-sm font-medium">
+                            {savedMapping.name}
+                          </span>
+                          <div className="flex gap-2">
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => loadColumnMapping(savedMapping)}
+                              className="h-7 text-xs"
+                            >
+                              Load
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() =>
+                                deleteColumnMapping(savedMapping.id)
+                              }
+                              className="h-7 text-xs text-red-500 hover:text-red-700"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* Save new template */}
+                  <div className="flex gap-2">
+                    <Input
+                      placeholder="Template name..."
+                      value={newMappingName}
+                      onChange={(e) => setNewMappingName(e.target.value)}
+                      className="text-sm h-8"
+                    />
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={saveCurrentColumnMapping}
+                      disabled={!newMappingName.trim()}
+                      className="h-8 text-xs gap-1"
+                    >
+                      <Plus className="h-3.5 w-3.5" />
+                      Save Current
+                    </Button>
+                  </div>
+
+                  {savedColumnMappings.length === 0 && (
+                    <p className="text-xs text-muted-foreground">
+                      No saved templates. Configure your mappings below and save
+                      them for future use.
+                    </p>
+                  )}
+                </div>
+
+                <Separator />
+
+                {/* Column Mapping Fields */}
                 {[
                   {
                     key: "fullName",
@@ -1599,6 +1776,12 @@ export default function AirportReportsTools() {
                     key: "documentNumber",
                     label: "Document Number",
                     icon: FileText,
+                    required: false,
+                  },
+                  {
+                    key: "category",
+                    label: "Category",
+                    icon: Filter,
                     required: false,
                   },
                   {
@@ -1856,7 +2039,23 @@ export default function AirportReportsTools() {
 
                       {messageConfig.useCustomTemplate && (
                         <div className="space-y-2">
-                          <Label>Template Content</Label>
+                          <div className="flex items-center justify-between">
+                            <Label>Template Content</Label>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => {
+                                setMessageConfig((prev) => ({
+                                  ...prev,
+                                  customTemplate: DEFAULT_CUSTOM_TEMPLATE,
+                                }));
+                              }}
+                              className="h-7 text-xs gap-1"
+                            >
+                              <X className="h-3 w-3" />
+                              Reset to Default
+                            </Button>
+                          </div>
                           <Textarea
                             value={messageConfig.customTemplate}
                             onChange={(e) => {
@@ -1868,25 +2067,81 @@ export default function AirportReportsTools() {
                             placeholder="Enter your custom template..."
                             className="font-mono text-sm min-h-[200px]"
                           />
-                          <div className="text-xs text-muted-foreground space-y-1">
+                          <div className="text-xs text-muted-foreground space-y-2">
                             <p className="font-semibold">
                               Available variables:
                             </p>
-                            <div className="grid grid-cols-2 gap-1 pl-2">
-                              <span>{`{{header}}`} - Arrival/Departure</span>
-                              <span>{`{{mode}}`} - arrival/departure</span>
-                              <span>{`{{date}}`} - Date</span>
-                              <span>{`{{time}}`} - Time</span>
-                              <span>{`{{passengers}}`} - Numbered list</span>
-                              <span>{`{{passengerCount}}`} - Count</span>
-                              <span>{`{{passengerNames}}`} - Names</span>
-                              <span>{`{{nationality}}`} - Delegation</span>
-                              <span>{`{{flight}}`} - Flight number</span>
-                              <span>{`{{flightTime}}`} - Flight | Time</span>
-                              <span>{`{{terminal}}`} - Terminal</span>
-                              <span>{`{{hotel}}`} - Hotel name</span>
-                              <span>{`{{baggage}}`} - Luggage info</span>
-                              <span>{`{{remarks}}`} - Remarks</span>
+                            <div className="space-y-2">
+                              <div>
+                                <p className="font-medium text-gray-700 mb-1">
+                                  Basic Info:
+                                </p>
+                                <div className="grid grid-cols-2 gap-1 pl-2">
+                                  <span>
+                                    {`{{header}}`} - Arrival/Departure
+                                  </span>
+                                  <span>{`{{mode}}`} - arrival/departure</span>
+                                  <span>{`{{date}}`} - Date</span>
+                                  <span>{`{{time}}`} - Time</span>
+                                </div>
+                              </div>
+                              <div>
+                                <p className="font-medium text-gray-700 mb-1">
+                                  Passengers:
+                                </p>
+                                <div className="grid grid-cols-2 gap-1 pl-2">
+                                  <span>
+                                    {`{{passengers}}`} - Numbered list
+                                  </span>
+                                  <span>
+                                    {`{{passengersDetailed}}`} - Full details
+                                  </span>
+                                  <span>{`{{passengerCount}}`} - Count</span>
+                                  <span>
+                                    {`{{passengerNames}}`} - Names only
+                                  </span>
+                                  <span>
+                                    {`{{positions}}`} - Positions list
+                                  </span>
+                                  <span>
+                                    {`{{documentNumbers}}`} - Doc numbers
+                                  </span>
+                                  <span>{`{{category}}`} - Category</span>
+                                  <span>
+                                    {`{{categories}}`} - All categories
+                                  </span>
+                                </div>
+                              </div>
+                              <div>
+                                <p className="font-medium text-gray-700 mb-1">
+                                  Flight & Location:
+                                </p>
+                                <div className="grid grid-cols-2 gap-1 pl-2">
+                                  <span>{`{{nationality}}`} - Delegation</span>
+                                  <span>
+                                    {`{{delegation}}`} - Same as above
+                                  </span>
+                                  <span>{`{{flight}}`} - Flight number</span>
+                                  <span>
+                                    {`{{flightTime}}`} - Flight | Time
+                                  </span>
+                                  <span>
+                                    {`{{flightInfo}}`} - Full flight info
+                                  </span>
+                                  <span>{`{{terminal}}`} - Terminal</span>
+                                  <span>{`{{hotel}}`} - Hotel name</span>
+                                </div>
+                              </div>
+                              <div>
+                                <p className="font-medium text-gray-700 mb-1">
+                                  Other:
+                                </p>
+                                <div className="grid grid-cols-2 gap-1 pl-2">
+                                  <span>{`{{baggage}}`} - Luggage info</span>
+                                  <span>{`{{luggage}}`} - Same as above</span>
+                                  <span>{`{{remarks}}`} - Remarks</span>
+                                </div>
+                              </div>
                             </div>
                           </div>
                         </div>
