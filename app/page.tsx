@@ -208,7 +208,7 @@ export default function AirportReportsTools() {
 
   // Processing states
   const [mode, setMode] = useState<"arrival" | "departure">("arrival");
-  const [selectedDate, setSelectedDate] = useState<string | "all">("all");
+  const [selectedDates, setSelectedDates] = useState<string[]>([]);
   const [columnMapping, setColumnMapping] = useState<ColumnMapping>({});
   const [messageConfig, setMessageConfig] = useState<MessageConfig>({
     includeHeader: true,
@@ -568,9 +568,9 @@ export default function AirportReportsTools() {
           ? columnMapping.arrivalFlight
           : columnMapping.departFlight;
 
-      // Filter by date if selected
+      // Filter by date if selected (if no dates selected, show all)
       let filteredData = [...excelData];
-      if (selectedDate !== "all" && dateField) {
+      if (selectedDates.length > 0 && dateField) {
         filteredData = filteredData.filter((row) => {
           const dateValue = row[dateField];
           if (!dateValue) return false;
@@ -582,7 +582,9 @@ export default function AirportReportsTools() {
             date = new Date(dateValue);
           }
 
-          return date && date.toISOString().split("T")[0] === selectedDate;
+          return (
+            date && selectedDates.includes(date.toISOString().split("T")[0])
+          );
         });
       }
 
@@ -885,7 +887,7 @@ export default function AirportReportsTools() {
       logUsage("Generate Messages", excelFile?.name, {
         mode,
         messageCount: messages.length,
-        date: selectedDate,
+        dates: selectedDates,
         useCustomTemplate: messageConfig.useCustomTemplate,
       });
     } catch (err) {
@@ -938,10 +940,55 @@ export default function AirportReportsTools() {
     });
 
     if (exportConfig.exportFormat === "single") {
-      // Single file with all messages
-      const content = messagesToExport
-        .map((m) => m.message)
-        .join("\n\n" + "─".repeat(50) + "\n\n");
+      // Single file with all messages, grouped by date with separators
+      const messagesByDate: Record<string, ProcessedMessage[]> = {};
+      messagesToExport.forEach((msg) => {
+        const dateKey = msg.date || "no-date";
+        if (!messagesByDate[dateKey]) {
+          messagesByDate[dateKey] = [];
+        }
+        messagesByDate[dateKey].push(msg);
+      });
+
+      // Sort dates
+      const sortedDates = Object.keys(messagesByDate).sort();
+
+      // Build content with date separators
+      const contentParts: string[] = [];
+      sortedDates.forEach((dateKey, dateIndex) => {
+        if (dateIndex > 0) {
+          // Add date separator between different dates
+          contentParts.push("\n" + "═".repeat(50));
+          contentParts.push(
+            `📅 ${new Date(dateKey + "T00:00:00").toLocaleDateString("en-US", {
+              weekday: "long",
+              year: "numeric",
+              month: "long",
+              day: "numeric",
+            })}`
+          );
+          contentParts.push("═".repeat(50) + "\n");
+        } else if (sortedDates.length > 1) {
+          // Add header for first date only if there are multiple dates
+          contentParts.push("═".repeat(50));
+          contentParts.push(
+            `📅 ${new Date(dateKey + "T00:00:00").toLocaleDateString("en-US", {
+              weekday: "long",
+              year: "numeric",
+              month: "long",
+              day: "numeric",
+            })}`
+          );
+          contentParts.push("═".repeat(50) + "\n");
+        }
+
+        const dateMessages = messagesByDate[dateKey]
+          .map((m) => m.message)
+          .join("\n\n" + "─".repeat(50) + "\n\n");
+        contentParts.push(dateMessages);
+      });
+
+      const content = contentParts.join("\n");
 
       const blob = new Blob([content], { type: "text/plain" });
       const url = URL.createObjectURL(blob);
@@ -1274,31 +1321,104 @@ export default function AirportReportsTools() {
                           <Calendar className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
                           Filter by Date
                         </Label>
-                        <Select
-                          value={selectedDate}
-                          onValueChange={setSelectedDate}
-                        >
-                          <SelectTrigger className="text-sm">
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="all">
-                              All Dates ({availableDates.length})
-                            </SelectItem>
-                            {availableDates.map((date) => (
-                              <SelectItem key={date} value={date}>
-                                {new Date(
-                                  date + "T00:00:00"
-                                ).toLocaleDateString("en-US", {
-                                  weekday: "short",
-                                  year: "numeric",
-                                  month: "short",
-                                  day: "numeric",
-                                })}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                        <Dialog>
+                          <DialogTrigger asChild>
+                            <Button
+                              variant="outline"
+                              className="w-full justify-between text-sm h-10"
+                            >
+                              <span className="truncate">
+                                {selectedDates.length === 0
+                                  ? "All Dates"
+                                  : selectedDates.length ===
+                                    availableDates.length
+                                  ? "All Dates Selected"
+                                  : `${selectedDates.length} date(s) selected`}
+                              </span>
+                              <ChevronDown className="h-4 w-4 ml-2 flex-shrink-0" />
+                            </Button>
+                          </DialogTrigger>
+                          <DialogContent className="max-w-md">
+                            <DialogHeader>
+                              <DialogTitle className="flex items-center gap-2">
+                                <Calendar className="h-5 w-5" />
+                                Select Dates
+                              </DialogTitle>
+                              <DialogDescription>
+                                Choose which dates to include in the report
+                              </DialogDescription>
+                            </DialogHeader>
+                            <div className="space-y-4">
+                              <div className="flex gap-2">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() =>
+                                    setSelectedDates([...availableDates])
+                                  }
+                                  className="flex-1"
+                                >
+                                  Select All
+                                </Button>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => setSelectedDates([])}
+                                  className="flex-1"
+                                >
+                                  Clear All
+                                </Button>
+                              </div>
+                              <ScrollArea className="h-[300px] pr-4">
+                                <div className="space-y-2">
+                                  {availableDates.map((date) => (
+                                    <div
+                                      key={date}
+                                      className="flex items-center space-x-3 p-2 rounded-md hover:bg-gray-50"
+                                    >
+                                      <Checkbox
+                                        id={`date-${date}`}
+                                        checked={selectedDates.includes(date)}
+                                        onCheckedChange={(checked) => {
+                                          if (checked) {
+                                            setSelectedDates((prev) => [
+                                              ...prev,
+                                              date,
+                                            ]);
+                                          } else {
+                                            setSelectedDates((prev) =>
+                                              prev.filter((d) => d !== date)
+                                            );
+                                          }
+                                        }}
+                                      />
+                                      <Label
+                                        htmlFor={`date-${date}`}
+                                        className="text-sm cursor-pointer flex-1"
+                                      >
+                                        {new Date(
+                                          date + "T00:00:00"
+                                        ).toLocaleDateString("en-US", {
+                                          weekday: "long",
+                                          year: "numeric",
+                                          month: "long",
+                                          day: "numeric",
+                                        })}
+                                      </Label>
+                                    </div>
+                                  ))}
+                                </div>
+                              </ScrollArea>
+                            </div>
+                            <div className="pt-4 border-t">
+                              <p className="text-sm text-muted-foreground">
+                                {selectedDates.length === 0
+                                  ? "No dates selected - all dates will be included"
+                                  : `${selectedDates.length} of ${availableDates.length} date(s) selected`}
+                              </p>
+                            </div>
+                          </DialogContent>
+                        </Dialog>
                       </div>
                     </>
                   )}
