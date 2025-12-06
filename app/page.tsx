@@ -6,6 +6,8 @@
 import { useState, useMemo, useEffect } from "react";
 import * as XLSX from "xlsx";
 import { logUsage } from "@/lib/logger";
+
+// UI Components
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -44,6 +46,8 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from "@/components/ui/accordion";
+
+// Icons
 import {
   Plane,
   PlaneLanding,
@@ -75,139 +79,60 @@ import {
   X,
 } from "lucide-react";
 
-// ============================================================================
-// TYPE DEFINITIONS
-// ============================================================================
+// Types from lib
+import type {
+  ExcelData,
+  ColumnMapping,
+  SavedColumnMapping,
+  MessageConfig,
+  ExportConfig,
+  ProcessedMessage,
+  CellDifference,
+  GuestComparison,
+  CleanupRule,
+  CompareColumnMapping,
+  SavedCompareMapping,
+  CompareConfig,
+} from "@/lib/types";
 
-type ExcelData = {
-  [key: string]: any;
-}[];
+// Constants from lib
+import {
+  DEFAULT_CUSTOM_TEMPLATE,
+  DEFAULT_MESSAGE_CONFIG,
+  DEFAULT_EXPORT_CONFIG,
+  DEFAULT_CLEANUP_RULES,
+  DEFAULT_COMPARE_CONFIG,
+  FIELD_LABELS,
+  ALL_COMPARE_FIELDS,
+  COMMON_MAPPING_FIELDS,
+  ARRIVAL_MAPPING_FIELDS,
+  DEPARTURE_MAPPING_FIELDS,
+  STORAGE_KEYS,
+} from "@/lib/constants";
 
-type ColumnMapping = {
-  fullName?: string;
-  nationality?: string;
-  position?: string;
-  documentNumber?: string;
-  category?: string;
-  terminal?: string;
-  arrivalDate?: string;
-  arrivalTime?: string;
-  arrivalFlight?: string;
-  departDate?: string;
-  departTime?: string;
-  departFlight?: string;
-  hotel?: string;
-  remarks?: string;
-};
+// Utility functions from lib
+import {
+  readExcelBuffer,
+  autoDetectColumns,
+  formatExcelDate,
+  formatExcelTime,
+  applyCleanupRules as applyCleanupRulesUtil,
+  extractAvailableDates,
+} from "@/lib/excel-utils";
 
-type MessageTemplate = {
-  id: string;
-  name: string;
-  template: string;
-};
+import { processExcelToMessages } from "@/lib/message-processing";
 
-type SavedColumnMapping = {
-  id: string;
-  name: string;
-  mapping: ColumnMapping;
-};
+import {
+  compareExcelData,
+  filterGuestComparisons,
+  extractCompareDates,
+  extractCompareTerminals,
+  getComparisonStats,
+} from "@/lib/comparison-utils";
 
-type ExportConfig = {
-  groupBy: "date" | "terminal" | "flight" | "nationality";
-  exportFormat: "single" | "individual";
-};
-
-type MessageConfig = {
-  includeHeader: boolean;
-  includePassengers: boolean;
-  includePosition: boolean;
-  includeNationality: boolean;
-  includeFlightInfo: boolean;
-  includeTerminal: boolean;
-  includeHotel: boolean;
-  includeBaggage: boolean;
-  includeRemarks: boolean;
-  customTemplate: string;
-  useCustomTemplate: boolean;
-};
-
-type ProcessedMessage = {
-  date: string;
-  time: string;
-  flight: string;
-  nationality: string;
-  terminal: string;
-  hotel: string;
-  passengers: Array<{
-    name: string;
-    position: string;
-    remarks: string;
-  }>;
-  message: string;
-};
-
-type CellDifference = {
-  sheet: string;
-  cell: string;
-  file1Value: any;
-  file2Value: any;
-};
-
-// Guest comparison result - one per guest showing all fields from both files
-type GuestComparison = {
-  id: string;
-  name: string;
-  documentNumber: string;
-  status: "match" | "only-file1" | "only-file2" | "different";
-  file1Data: Record<string, any>;
-  file2Data: Record<string, any>;
-  differences: string[]; // Fields that differ
-};
-
-// Default template constant
-const DEFAULT_CUSTOM_TEMPLATE = `🛬 {{header}}
-
-👥 Passenger(s):
-{{passengers}}
-
-🌍 Delegation: {{nationality}}
-✈️ Flight: {{flight}} | {{time}}
-🏢 Terminal: {{terminal}}
-🏨 Hotel: {{hotel}}
-💼 Luggage: {{baggage}}
-📝 Remarks: {{remarks}}`;
-
-type CleanupRule = {
-  id: string;
-  type:
-    | "replace"
-    | "prefix"
-    | "suffix"
-    | "trim"
-    | "capitalize"
-    | "uppercase"
-    | "lowercase";
-  find: string;
-  replace: string;
-  applyTo: string; // Will be dynamic based on available columns
-  enabled: boolean;
-};
-
-// Compare uses same structure as ColumnMapping for each file
-type CompareColumnMapping = ColumnMapping;
-
-type SavedCompareMapping = {
-  id: string;
-  name: string;
-  mappingFile1: CompareColumnMapping;
-  mappingFile2: CompareColumnMapping;
-  fieldsToCompare: string[];
-};
-
-type CompareConfig = {
-  matchBy: "name" | "documentNumber" | "both";
-  fieldsToCompare: string[];
-};
+// Tab Components
+import { MessagesTab } from "@/components/tabs/MessagesTab";
+import { CompareTab } from "@/components/tabs/CompareTab";
 
 // ============================================================================
 // MAIN COMPONENT
@@ -236,6 +161,11 @@ export default function AirportReportsTools() {
   // Processing states
   const [mode, setMode] = useState<"arrival" | "departure">("arrival");
   const [selectedDates, setSelectedDates] = useState<string[]>([]);
+  const [selectedTerminals, setSelectedTerminals] = useState<string[]>([]);
+  const [selectedFlights, setSelectedFlights] = useState<string[]>([]);
+  const [selectedNationalities, setSelectedNationalities] = useState<string[]>(
+    []
+  );
   const [columnMapping, setColumnMapping] = useState<ColumnMapping>({});
   const [messageConfig, setMessageConfig] = useState<MessageConfig>({
     includeHeader: true,
@@ -310,8 +240,10 @@ export default function AirportReportsTools() {
       "hotel",
       "remarks",
       "arrivalDate",
+      "arrivalTime",
       "arrivalFlight",
       "departDate",
+      "departTime",
       "departFlight",
     ],
   });
@@ -567,6 +499,57 @@ export default function AirportReportsTools() {
     return Array.from(dates).sort();
   }, [excelData, columnMapping, mode]);
 
+  // Get available terminals from data
+  const availableTerminals = useMemo(() => {
+    if (!excelData.length || !columnMapping?.terminal) return [];
+
+    const terminals = new Set<string>();
+    excelData.forEach((row) => {
+      const value = row[columnMapping.terminal!];
+      if (value && String(value).trim()) {
+        terminals.add(String(value).trim());
+      }
+    });
+
+    return Array.from(terminals).sort();
+  }, [excelData, columnMapping]);
+
+  // Get available flights from data
+  const availableFlights = useMemo(() => {
+    if (!excelData.length || !columnMapping) return [];
+
+    const flightField =
+      mode === "arrival"
+        ? columnMapping.arrivalFlight
+        : columnMapping.departFlight;
+    if (!flightField) return [];
+
+    const flights = new Set<string>();
+    excelData.forEach((row) => {
+      const value = row[flightField];
+      if (value && String(value).trim()) {
+        flights.add(String(value).trim());
+      }
+    });
+
+    return Array.from(flights).sort();
+  }, [excelData, columnMapping, mode]);
+
+  // Get available nationalities/delegations from data
+  const availableNationalities = useMemo(() => {
+    if (!excelData.length || !columnMapping?.nationality) return [];
+
+    const nationalities = new Set<string>();
+    excelData.forEach((row) => {
+      const value = row[columnMapping.nationality!];
+      if (value && String(value).trim()) {
+        nationalities.add(String(value).trim());
+      }
+    });
+
+    return Array.from(nationalities).sort();
+  }, [excelData, columnMapping]);
+
   // ============================================================================
   // DATA CLEANUP FUNCTIONS
   // ============================================================================
@@ -683,6 +666,30 @@ export default function AirportReportsTools() {
           return (
             date && selectedDates.includes(date.toISOString().split("T")[0])
           );
+        });
+      }
+
+      // Filter by terminal if selected
+      if (selectedTerminals.length > 0 && columnMapping.terminal) {
+        filteredData = filteredData.filter((row) => {
+          const value = row[columnMapping.terminal!];
+          return value && selectedTerminals.includes(String(value).trim());
+        });
+      }
+
+      // Filter by flight if selected
+      if (selectedFlights.length > 0 && flightField) {
+        filteredData = filteredData.filter((row) => {
+          const value = row[flightField];
+          return value && selectedFlights.includes(String(value).trim());
+        });
+      }
+
+      // Filter by nationality if selected
+      if (selectedNationalities.length > 0 && columnMapping.nationality) {
+        filteredData = filteredData.filter((row) => {
+          const value = row[columnMapping.nationality!];
+          return value && selectedNationalities.includes(String(value).trim());
         });
       }
 
@@ -1492,1631 +1499,84 @@ export default function AirportReportsTools() {
                 value="messages"
                 className="space-y-4 sm:space-y-6 mt-4 sm:mt-6"
               >
-                <CardContent className="space-y-4 sm:space-y-6 px-3 sm:px-6">
-                  {/* Mode Selection */}
-                  <div className="space-y-3">
-                    <Label className="text-sm sm:text-base font-semibold flex items-center gap-2">
-                      <Plane className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-                      Operation Mode
-                    </Label>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 sm:gap-3">
-                      <Button
-                        variant={mode === "arrival" ? "default" : "outline"}
-                        onClick={() => setMode("arrival")}
-                        className="w-full justify-center sm:justify-start gap-2 h-10 sm:h-11"
-                      >
-                        <PlaneLanding className="h-4 w-4" />
-                        <span className="text-sm">Arrival Messages</span>
-                      </Button>
-                      <Button
-                        variant={mode === "departure" ? "default" : "outline"}
-                        onClick={() => setMode("departure")}
-                        className="w-full justify-center sm:justify-start gap-2 h-10 sm:h-11"
-                      >
-                        <PlaneTakeoff className="h-4 w-4" />
-                        <span className="text-sm">Departure Messages</span>
-                      </Button>
-                    </div>
-                  </div>
-
-                  <Separator />
-
-                  {/* File Upload */}
-                  <div className="space-y-3">
-                    <Label
-                      htmlFor="excel-file"
-                      className="text-sm sm:text-base font-semibold flex items-center gap-2"
-                    >
-                      <FileSpreadsheet className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-                      Excel File
-                    </Label>
-                    <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-3">
-                      <Input
-                        id="excel-file"
-                        type="file"
-                        accept=".xlsx,.xls,.csv"
-                        onChange={async (e) => {
-                          const file = e.target.files?.[0];
-                          if (file) {
-                            setExcelFile(file);
-                            await readExcelFile(file);
-                          }
-                        }}
-                        className="cursor-pointer text-sm"
-                      />
-                      {excelFile && (
-                        <Badge
-                          variant="secondary"
-                          className="flex items-center gap-1 w-fit"
-                        >
-                          <Check className="h-3 w-3" />
-                          <span className="text-xs">Loaded</span>
-                        </Badge>
-                      )}
-                    </div>
-                    {excelFile && (
-                      <div className="bg-green-50 border border-green-200 rounded-lg p-3">
-                        <p className="text-xs sm:text-sm text-green-800 flex items-start gap-2">
-                          <FileText className="h-4 w-4 flex-shrink-0 mt-0.5" />
-                          <span className="break-all">
-                            <span className="font-semibold">
-                              {excelFile.name}
-                            </span>
-                            <br />
-                            <span className="text-green-600">
-                              {excelData.length} rows • {columns.length} columns
-                            </span>
-                          </span>
-                        </p>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Date Filter */}
-                  {availableDates.length > 0 && (
-                    <>
-                      <Separator />
-                      <div className="space-y-3">
-                        <Label className="text-sm sm:text-base font-semibold flex items-center gap-2">
-                          <Calendar className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-                          Filter by Date
-                        </Label>
-                        <Dialog>
-                          <DialogTrigger asChild>
-                            <Button
-                              variant="outline"
-                              className="w-full justify-between text-sm h-10"
-                            >
-                              <span className="truncate">
-                                {selectedDates.length === 0
-                                  ? "All Dates"
-                                  : selectedDates.length ===
-                                    availableDates.length
-                                  ? "All Dates Selected"
-                                  : `${selectedDates.length} date(s) selected`}
-                              </span>
-                              <ChevronDown className="h-4 w-4 ml-2 flex-shrink-0" />
-                            </Button>
-                          </DialogTrigger>
-                          <DialogContent className="max-w-md">
-                            <DialogHeader>
-                              <DialogTitle className="flex items-center gap-2">
-                                <Calendar className="h-5 w-5" />
-                                Select Dates
-                              </DialogTitle>
-                              <DialogDescription>
-                                Choose which dates to include in the report
-                              </DialogDescription>
-                            </DialogHeader>
-                            <div className="space-y-4">
-                              <div className="flex gap-2">
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() =>
-                                    setSelectedDates([...availableDates])
-                                  }
-                                  className="flex-1"
-                                >
-                                  Select All
-                                </Button>
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => setSelectedDates([])}
-                                  className="flex-1"
-                                >
-                                  Clear All
-                                </Button>
-                              </div>
-                              <ScrollArea className="h-[300px] pr-4">
-                                <div className="space-y-2">
-                                  {availableDates.map((date) => (
-                                    <div
-                                      key={date}
-                                      className="flex items-center space-x-3 p-2 rounded-md hover:bg-gray-50"
-                                    >
-                                      <Checkbox
-                                        id={`date-${date}`}
-                                        checked={selectedDates.includes(date)}
-                                        onCheckedChange={(checked) => {
-                                          if (checked) {
-                                            setSelectedDates((prev) => [
-                                              ...prev,
-                                              date,
-                                            ]);
-                                          } else {
-                                            setSelectedDates((prev) =>
-                                              prev.filter((d) => d !== date)
-                                            );
-                                          }
-                                        }}
-                                      />
-                                      <Label
-                                        htmlFor={`date-${date}`}
-                                        className="text-sm cursor-pointer flex-1"
-                                      >
-                                        {new Date(
-                                          date + "T00:00:00"
-                                        ).toLocaleDateString("en-US", {
-                                          weekday: "long",
-                                          year: "numeric",
-                                          month: "long",
-                                          day: "numeric",
-                                        })}
-                                      </Label>
-                                    </div>
-                                  ))}
-                                </div>
-                              </ScrollArea>
-                            </div>
-                            <div className="pt-4 border-t">
-                              <p className="text-sm text-muted-foreground">
-                                {selectedDates.length === 0
-                                  ? "No dates selected - all dates will be included"
-                                  : `${selectedDates.length} of ${availableDates.length} date(s) selected`}
-                              </p>
-                            </div>
-                          </DialogContent>
-                        </Dialog>
-                      </div>
-                    </>
-                  )}
-
-                  <Separator />
-
-                  {/* Action Buttons */}
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 sm:gap-3">
-                    <Dialog
-                      open={showMappingModal}
-                      onOpenChange={setShowMappingModal}
-                    >
-                      <DialogTrigger asChild>
-                        <Button
-                          variant="outline"
-                          disabled={!excelData.length}
-                          className="w-full gap-2 h-10 sm:h-11 text-sm"
-                        >
-                          <Map className="h-4 w-4" />
-                          Map Columns
-                        </Button>
-                      </DialogTrigger>
-                    </Dialog>
-
-                    <Dialog
-                      open={showConfigModal}
-                      onOpenChange={setShowConfigModal}
-                    >
-                      <DialogTrigger asChild>
-                        <Button
-                          variant="outline"
-                          disabled={!excelData.length}
-                          className="w-full gap-2 h-10 sm:h-11 text-sm"
-                        >
-                          <Settings className="h-4 w-4" />
-                          Configure Output
-                        </Button>
-                      </DialogTrigger>
-                    </Dialog>
-
-                    <Dialog
-                      open={showCleanupModal}
-                      onOpenChange={setShowCleanupModal}
-                    >
-                      <DialogTrigger asChild>
-                        <Button
-                          variant="outline"
-                          disabled={!excelData.length}
-                          className="w-full gap-2 h-10 sm:h-11 text-sm"
-                        >
-                          <Sparkles className="h-4 w-4" />
-                          Data Cleanup
-                        </Button>
-                      </DialogTrigger>
-                    </Dialog>
-                  </div>
-
-                  {/* Generate Button */}
-                  <Button
-                    onClick={processMessages}
-                    disabled={!excelData.length || isProcessing}
-                    className="w-full h-12 sm:h-14 text-sm sm:text-base gap-2 bg-black hover:bg-gray-800 text-white shadow-lg hover:shadow-xl transition-all disabled:bg-gray-300 disabled:text-gray-500"
-                    size="lg"
-                  >
-                    {isProcessing ? (
-                      <>
-                        <div className="h-4 w-4 sm:h-5 sm:w-5 animate-spin rounded-full border-2 border-current border-t-transparent" />
-                        <span>Processing...</span>
-                      </>
-                    ) : (
-                      <>
-                        <Sparkles className="h-4 w-4 sm:h-5 sm:w-5" />
-                        <span>Generate Messages</span>
-                      </>
-                    )}
-                  </Button>
-                </CardContent>
+                <MessagesTab
+                  excelFile={excelFile}
+                  setExcelFile={setExcelFile}
+                  excelData={excelData}
+                  setExcelData={setExcelData}
+                  columns={columns}
+                  setColumns={setColumns}
+                  mode={mode}
+                  setMode={setMode}
+                  selectedDates={selectedDates}
+                  setSelectedDates={setSelectedDates}
+                  selectedTerminals={selectedTerminals}
+                  setSelectedTerminals={setSelectedTerminals}
+                  selectedFlights={selectedFlights}
+                  setSelectedFlights={setSelectedFlights}
+                  selectedNationalities={selectedNationalities}
+                  setSelectedNationalities={setSelectedNationalities}
+                  columnMapping={columnMapping}
+                  setColumnMapping={setColumnMapping}
+                  messageConfig={messageConfig}
+                  exportConfig={exportConfig}
+                  cleanupRules={cleanupRules}
+                  isProcessing={isProcessing}
+                  showMappingModal={showMappingModal}
+                  setShowMappingModal={setShowMappingModal}
+                  showConfigModal={showConfigModal}
+                  setShowConfigModal={setShowConfigModal}
+                  showCleanupModal={showCleanupModal}
+                  setShowCleanupModal={setShowCleanupModal}
+                  savedColumnMappings={savedColumnMappings}
+                  availableDates={availableDates}
+                  availableTerminals={availableTerminals}
+                  availableFlights={availableFlights}
+                  availableNationalities={availableNationalities}
+                  readExcelFile={readExcelFile}
+                  processMessages={processMessages}
+                />
               </TabsContent>
+
               <TabsContent
                 value="compare"
                 className="space-y-4 sm:space-y-6 mt-4 sm:mt-6"
               >
-                <CardContent className="space-y-4 sm:space-y-6 px-3 sm:px-6">
-                  {/* Compare Tab Content */}
-                  <div className="space-y-3">
-                    <Label
-                      htmlFor="file1"
-                      className="text-sm sm:text-base font-semibold flex items-center gap-2"
-                    >
-                      <Upload className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-                      First File
-                    </Label>
-                    <Input
-                      id="file1"
-                      type="file"
-                      accept=".xlsx,.xls,.csv"
-                      onChange={async (e) => {
-                        const f = e.target.files?.[0] || null;
-                        setFile1(f);
-                        if (f) {
-                          try {
-                            const buf = await f.arrayBuffer();
-                            const wb = XLSX.read(buf);
-                            const sheet = wb.SheetNames[0];
-                            const ws = wb.Sheets[sheet];
-                            const json = XLSX.utils.sheet_to_json(ws, {
-                              defval: "",
-                            });
-                            const cols = json.length
-                              ? Object.keys(json[0] as any)
-                              : [];
-                            setColumnsFile1(cols);
-                          } catch (err) {
-                            console.error("Failed to read file1 columns", err);
-                            setColumnsFile1([]);
-                          }
-                        } else {
-                          setColumnsFile1([]);
-                        }
-                      }}
-                      className="cursor-pointer text-sm"
-                    />
-                    {file1 && (
-                      <div className="bg-green-50 border border-green-200 rounded-lg p-2.5">
-                        <p className="text-xs sm:text-sm text-green-800 flex items-center gap-2">
-                          <Check className="h-4 w-4 text-green-600 flex-shrink-0" />
-                          <span className="break-all">{file1.name}</span>
-                        </p>
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="space-y-3">
-                    <Label
-                      htmlFor="file2"
-                      className="text-sm sm:text-base font-semibold flex items-center gap-2"
-                    >
-                      <Upload className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
-                      Second File
-                    </Label>
-                    <Input
-                      id="file2"
-                      type="file"
-                      accept=".xlsx,.xls,.csv"
-                      onChange={async (e) => {
-                        const f = e.target.files?.[0] || null;
-                        setFile2(f);
-                        if (f) {
-                          try {
-                            const buf = await f.arrayBuffer();
-                            const wb = XLSX.read(buf);
-                            const sheet = wb.SheetNames[0];
-                            const ws = wb.Sheets[sheet];
-                            const json = XLSX.utils.sheet_to_json(ws, {
-                              defval: "",
-                            });
-                            const cols = json.length
-                              ? Object.keys(json[0] as any)
-                              : [];
-                            setColumnsFile2(cols);
-                          } catch (err) {
-                            console.error("Failed to read file2 columns", err);
-                            setColumnsFile2([]);
-                          }
-                        } else {
-                          setColumnsFile2([]);
-                        }
-                      }}
-                      className="cursor-pointer text-sm"
-                    />
-                    {file2 && (
-                      <div className="bg-green-50 border border-green-200 rounded-lg p-2.5">
-                        <p className="text-xs sm:text-sm text-green-800 flex items-center gap-2">
-                          <Check className="h-4 w-4 text-green-600 flex-shrink-0" />
-                          <span className="break-all">{file2.name}</span>
-                        </p>
-                      </div>
-                    )}
-                  </div>
-
-                  <Separator />
-
-                  {/* Map Columns Button */}
-                  <div className="pt-1">
-                    <Dialog
-                      open={showCompareMappingModal}
-                      onOpenChange={setShowCompareMappingModal}
-                    >
-                      <DialogTrigger asChild>
-                        <Button
-                          variant="outline"
-                          disabled={!file1 || !file2}
-                          className="w-full gap-2 h-10 sm:h-11 text-sm"
-                        >
-                          <Map className="h-4 w-4" />
-                          Map Compare Columns
-                        </Button>
-                      </DialogTrigger>
-                      <DialogContent className="max-w-[95vw] sm:max-w-4xl lg:max-w-5xl max-h-[90vh] sm:max-h-[85vh]">
-                        <DialogHeader>
-                          <DialogTitle className="flex items-center gap-2">
-                            <Map className="h-5 w-5" />
-                            Map Compare Columns
-                          </DialogTitle>
-                          <DialogDescription>
-                            Map columns from each file for comparison. Only
-                            mapped and selected fields will be compared.
-                          </DialogDescription>
-                        </DialogHeader>
-                        <ScrollArea className="h-[60vh] pr-2 sm:pr-4">
-                          <div className="space-y-6">
-                            {/* Saved Presets */}
-                            <div className="bg-gray-50 rounded-lg p-4 space-y-3">
-                              <Label className="text-sm font-semibold flex items-center gap-2">
-                                <FileText className="h-4 w-4" />
-                                Saved Mapping Presets
-                              </Label>
-                              {savedCompareMappings.length > 0 && (
-                                <div className="space-y-2">
-                                  {savedCompareMappings.map((preset) => (
-                                    <div
-                                      key={preset.id}
-                                      className="flex items-center justify-between bg-white rounded-md p-2 border"
-                                    >
-                                      <span className="text-sm font-medium">
-                                        {preset.name}
-                                      </span>
-                                      <div className="flex gap-1 flex-wrap">
-                                        <Button
-                                          variant="outline"
-                                          size="sm"
-                                          onClick={() => {
-                                            setCompareMappingFile1(
-                                              preset.mappingFile1
-                                            );
-                                          }}
-                                          className="h-7 text-xs"
-                                          title="Load this preset's mapping for File 1"
-                                        >
-                                          → File 1
-                                        </Button>
-                                        <Button
-                                          variant="outline"
-                                          size="sm"
-                                          onClick={() => {
-                                            setCompareMappingFile2(
-                                              preset.mappingFile1
-                                            );
-                                          }}
-                                          className="h-7 text-xs"
-                                          title="Load this preset's mapping for File 2"
-                                        >
-                                          → File 2
-                                        </Button>
-                                        <Button
-                                          variant="outline"
-                                          size="sm"
-                                          onClick={() => {
-                                            setCompareMappingFile1(
-                                              preset.mappingFile1
-                                            );
-                                            setCompareMappingFile2(
-                                              preset.mappingFile2
-                                            );
-                                            setCompareConfig((prev) => ({
-                                              ...prev,
-                                              fieldsToCompare:
-                                                preset.fieldsToCompare,
-                                            }));
-                                          }}
-                                          className="h-7 text-xs"
-                                          title="Load both file mappings and settings"
-                                        >
-                                          Load All
-                                        </Button>
-                                        <Button
-                                          variant="ghost"
-                                          size="sm"
-                                          onClick={() =>
-                                            setSavedCompareMappings((prev) =>
-                                              prev.filter(
-                                                (p) => p.id !== preset.id
-                                              )
-                                            )
-                                          }
-                                          className="h-7 text-xs text-red-500 hover:text-red-700"
-                                        >
-                                          <Trash2 className="h-3.5 w-3.5" />
-                                        </Button>
-                                      </div>
-                                    </div>
-                                  ))}
-                                </div>
-                              )}
-                              <div className="flex gap-2">
-                                <Input
-                                  placeholder="Preset name..."
-                                  value={newCompareMappingName}
-                                  onChange={(e) =>
-                                    setNewCompareMappingName(e.target.value)
-                                  }
-                                  className="text-sm h-8"
-                                />
-                                <Button
-                                  variant="outline"
-                                  size="sm"
-                                  onClick={() => {
-                                    if (!newCompareMappingName.trim()) return;
-                                    setSavedCompareMappings((prev) => [
-                                      ...prev,
-                                      {
-                                        id: Date.now().toString(),
-                                        name: newCompareMappingName.trim(),
-                                        mappingFile1: {
-                                          ...compareMappingFile1,
-                                        },
-                                        mappingFile2: {
-                                          ...compareMappingFile2,
-                                        },
-                                        fieldsToCompare: [
-                                          ...compareConfig.fieldsToCompare,
-                                        ],
-                                      },
-                                    ]);
-                                    setNewCompareMappingName("");
-                                  }}
-                                  disabled={!newCompareMappingName.trim()}
-                                  className="h-8 text-xs gap-1"
-                                >
-                                  <Plus className="h-3.5 w-3.5" />
-                                  Save Current
-                                </Button>
-                              </div>
-                            </div>
-
-                            <Separator />
-
-                            {/* Match Settings */}
-                            <div className="space-y-3">
-                              <Label className="text-sm font-semibold">
-                                Match Passengers By
-                              </Label>
-                              <Select
-                                value={compareConfig.matchBy}
-                                onValueChange={(
-                                  v: "name" | "documentNumber" | "both"
-                                ) =>
-                                  setCompareConfig((prev) => ({
-                                    ...prev,
-                                    matchBy: v,
-                                  }))
-                                }
-                              >
-                                <SelectTrigger>
-                                  <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="both">
-                                    Document Number or Name
-                                  </SelectItem>
-                                  <SelectItem value="documentNumber">
-                                    Document Number Only
-                                  </SelectItem>
-                                  <SelectItem value="name">
-                                    Name Only
-                                  </SelectItem>
-                                </SelectContent>
-                              </Select>
-                            </div>
-
-                            <Separator />
-
-                            {/* Fields to Compare */}
-                            <div className="space-y-3">
-                              <Label className="text-sm font-semibold">
-                                Fields to Compare
-                              </Label>
-                              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                                {[
-                                  { key: "fullName", label: "Name" },
-                                  { key: "nationality", label: "Nationality" },
-                                  { key: "position", label: "Position" },
-                                  {
-                                    key: "documentNumber",
-                                    label: "Document #",
-                                  },
-                                  { key: "terminal", label: "Terminal" },
-                                  { key: "hotel", label: "Hotel" },
-                                  { key: "remarks", label: "Remarks" },
-                                  { key: "date", label: "Date" },
-                                  { key: "time", label: "Time" },
-                                  { key: "flight", label: "Flight" },
-                                ].map((f) => (
-                                  <div
-                                    key={f.key}
-                                    className="flex items-center space-x-2"
-                                  >
-                                    <Checkbox
-                                      id={`compare-field-${f.key}`}
-                                      checked={compareConfig.fieldsToCompare.includes(
-                                        f.key
-                                      )}
-                                      onCheckedChange={(checked) => {
-                                        setCompareConfig((prev) => ({
-                                          ...prev,
-                                          fieldsToCompare: checked
-                                            ? [...prev.fieldsToCompare, f.key]
-                                            : prev.fieldsToCompare.filter(
-                                                (x) => x !== f.key
-                                              ),
-                                        }));
-                                      }}
-                                    />
-                                    <Label
-                                      htmlFor={`compare-field-${f.key}`}
-                                      className="text-sm cursor-pointer"
-                                    >
-                                      {f.label}
-                                    </Label>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-
-                            <Separator />
-
-                            {/* Column Mappings */}
-                            <div className="space-y-4">
-                              <Label className="text-sm font-semibold">
-                                Column Mappings
-                              </Label>
-                              <div className="grid grid-cols-1 gap-4">
-                                {/* Headers with file names */}
-                                <div className="grid grid-cols-3 gap-2 text-sm font-medium text-gray-600">
-                                  <span>Field</span>
-                                  <span
-                                    className="truncate"
-                                    title={file1?.name || "File 1"}
-                                  >
-                                    📄 {file1?.name || "File 1"}
-                                  </span>
-                                  <span
-                                    className="truncate"
-                                    title={file2?.name || "File 2"}
-                                  >
-                                    📄 {file2?.name || "File 2"}
-                                  </span>
-                                </div>
-
-                                {/* Common Fields */}
-                                {[
-                                  {
-                                    key: "fullName",
-                                    label: "Full Name",
-                                    required: true,
-                                  },
-                                  {
-                                    key: "documentNumber",
-                                    label: "Document Number",
-                                  },
-                                  { key: "nationality", label: "Nationality" },
-                                  { key: "position", label: "Position" },
-                                  { key: "terminal", label: "Terminal" },
-                                  { key: "hotel", label: "Hotel" },
-                                  { key: "remarks", label: "Remarks" },
-                                ].map((f) => (
-                                  <div
-                                    key={f.key}
-                                    className="grid grid-cols-3 gap-2 items-center"
-                                  >
-                                    <Label className="flex items-center gap-2 text-sm">
-                                      {f.label}
-                                      {f.required && (
-                                        <Badge
-                                          variant="destructive"
-                                          className="text-xs"
-                                        >
-                                          Required
-                                        </Badge>
-                                      )}
-                                    </Label>
-                                    <Select
-                                      value={
-                                        compareMappingFile1[
-                                          f.key as keyof CompareColumnMapping
-                                        ] || "none"
-                                      }
-                                      onValueChange={(v) =>
-                                        setCompareMappingFile1((prev) => ({
-                                          ...prev,
-                                          [f.key]: v === "none" ? undefined : v,
-                                        }))
-                                      }
-                                    >
-                                      <SelectTrigger className="text-sm">
-                                        <SelectValue placeholder="Select column" />
-                                      </SelectTrigger>
-                                      <SelectContent>
-                                        <SelectItem value="none">
-                                          -- Not mapped --
-                                        </SelectItem>
-                                        {columnsFile1.map((c) => (
-                                          <SelectItem key={c} value={c}>
-                                            {c}
-                                          </SelectItem>
-                                        ))}
-                                      </SelectContent>
-                                    </Select>
-                                    <Select
-                                      value={
-                                        compareMappingFile2[
-                                          f.key as keyof CompareColumnMapping
-                                        ] || "none"
-                                      }
-                                      onValueChange={(v) =>
-                                        setCompareMappingFile2((prev) => ({
-                                          ...prev,
-                                          [f.key]: v === "none" ? undefined : v,
-                                        }))
-                                      }
-                                    >
-                                      <SelectTrigger className="text-sm">
-                                        <SelectValue placeholder="Select column" />
-                                      </SelectTrigger>
-                                      <SelectContent>
-                                        <SelectItem value="none">
-                                          -- Not mapped --
-                                        </SelectItem>
-                                        {columnsFile2.map((c) => (
-                                          <SelectItem key={c} value={c}>
-                                            {c}
-                                          </SelectItem>
-                                        ))}
-                                      </SelectContent>
-                                    </Select>
-                                  </div>
-                                ))}
-
-                                {/* Arrival Fields */}
-                                <div className="pt-2 border-t">
-                                  <p className="text-xs text-muted-foreground mb-2">
-                                    Arrival Fields
-                                  </p>
-                                </div>
-                                {[
-                                  { key: "arrivalDate", label: "Arrival Date" },
-                                  { key: "arrivalTime", label: "Arrival Time" },
-                                  {
-                                    key: "arrivalFlight",
-                                    label: "Arrival Flight",
-                                  },
-                                ].map((f) => (
-                                  <div
-                                    key={f.key}
-                                    className="grid grid-cols-3 gap-2 items-center"
-                                  >
-                                    <Label className="text-sm">{f.label}</Label>
-                                    <Select
-                                      value={
-                                        compareMappingFile1[
-                                          f.key as keyof CompareColumnMapping
-                                        ] || "none"
-                                      }
-                                      onValueChange={(v) =>
-                                        setCompareMappingFile1((prev) => ({
-                                          ...prev,
-                                          [f.key]: v === "none" ? undefined : v,
-                                        }))
-                                      }
-                                    >
-                                      <SelectTrigger className="text-sm">
-                                        <SelectValue placeholder="Select column" />
-                                      </SelectTrigger>
-                                      <SelectContent>
-                                        <SelectItem value="none">
-                                          -- Not mapped --
-                                        </SelectItem>
-                                        {columnsFile1.map((c) => (
-                                          <SelectItem key={c} value={c}>
-                                            {c}
-                                          </SelectItem>
-                                        ))}
-                                      </SelectContent>
-                                    </Select>
-                                    <Select
-                                      value={
-                                        compareMappingFile2[
-                                          f.key as keyof CompareColumnMapping
-                                        ] || "none"
-                                      }
-                                      onValueChange={(v) =>
-                                        setCompareMappingFile2((prev) => ({
-                                          ...prev,
-                                          [f.key]: v === "none" ? undefined : v,
-                                        }))
-                                      }
-                                    >
-                                      <SelectTrigger className="text-sm">
-                                        <SelectValue placeholder="Select column" />
-                                      </SelectTrigger>
-                                      <SelectContent>
-                                        <SelectItem value="none">
-                                          -- Not mapped --
-                                        </SelectItem>
-                                        {columnsFile2.map((c) => (
-                                          <SelectItem key={c} value={c}>
-                                            {c}
-                                          </SelectItem>
-                                        ))}
-                                      </SelectContent>
-                                    </Select>
-                                  </div>
-                                ))}
-
-                                {/* Departure Fields */}
-                                <div className="pt-2 border-t">
-                                  <p className="text-xs text-muted-foreground mb-2">
-                                    Departure Fields
-                                  </p>
-                                </div>
-                                {[
-                                  {
-                                    key: "departDate",
-                                    label: "Departure Date",
-                                  },
-                                  {
-                                    key: "departTime",
-                                    label: "Departure Time",
-                                  },
-                                  {
-                                    key: "departFlight",
-                                    label: "Departure Flight",
-                                  },
-                                ].map((f) => (
-                                  <div
-                                    key={f.key}
-                                    className="grid grid-cols-3 gap-2 items-center"
-                                  >
-                                    <Label className="text-sm">{f.label}</Label>
-                                    <Select
-                                      value={
-                                        compareMappingFile1[
-                                          f.key as keyof CompareColumnMapping
-                                        ] || "none"
-                                      }
-                                      onValueChange={(v) =>
-                                        setCompareMappingFile1((prev) => ({
-                                          ...prev,
-                                          [f.key]: v === "none" ? undefined : v,
-                                        }))
-                                      }
-                                    >
-                                      <SelectTrigger className="text-sm">
-                                        <SelectValue placeholder="Select column" />
-                                      </SelectTrigger>
-                                      <SelectContent>
-                                        <SelectItem value="none">
-                                          -- Not mapped --
-                                        </SelectItem>
-                                        {columnsFile1.map((c) => (
-                                          <SelectItem key={c} value={c}>
-                                            {c}
-                                          </SelectItem>
-                                        ))}
-                                      </SelectContent>
-                                    </Select>
-                                    <Select
-                                      value={
-                                        compareMappingFile2[
-                                          f.key as keyof CompareColumnMapping
-                                        ] || "none"
-                                      }
-                                      onValueChange={(v) =>
-                                        setCompareMappingFile2((prev) => ({
-                                          ...prev,
-                                          [f.key]: v === "none" ? undefined : v,
-                                        }))
-                                      }
-                                    >
-                                      <SelectTrigger className="text-sm">
-                                        <SelectValue placeholder="Select column" />
-                                      </SelectTrigger>
-                                      <SelectContent>
-                                        <SelectItem value="none">
-                                          -- Not mapped --
-                                        </SelectItem>
-                                        {columnsFile2.map((c) => (
-                                          <SelectItem key={c} value={c}>
-                                            {c}
-                                          </SelectItem>
-                                        ))}
-                                      </SelectContent>
-                                    </Select>
-                                  </div>
-                                ))}
-                              </div>
-                            </div>
-                          </div>
-                        </ScrollArea>
-                        <div className="flex justify-between pt-4 border-t">
-                          <Button
-                            variant="outline"
-                            onClick={() => setShowCompareMappingModal(false)}
-                          >
-                            Cancel
-                          </Button>
-                          <Button
-                            onClick={() => setShowCompareMappingModal(false)}
-                          >
-                            Save Mapping
-                          </Button>
-                        </div>
-                      </DialogContent>
-                    </Dialog>
-                  </div>
-
-                  {/* Data Cleanup Button */}
-                  <Dialog
-                    open={showCleanupModal}
-                    onOpenChange={setShowCleanupModal}
-                  >
-                    <DialogTrigger asChild>
-                      <Button
-                        variant="outline"
-                        disabled={!file1 || !file2}
-                        className="w-full gap-2 h-10 sm:h-11 text-sm"
-                      >
-                        <Sparkles className="h-4 w-4" />
-                        Data Cleanup Rules
-                      </Button>
-                    </DialogTrigger>
-                  </Dialog>
-
-                  <Button
-                    onClick={compareExcelFiles}
-                    disabled={!file1 || !file2 || isProcessing}
-                    className="w-full h-12 sm:h-14 text-sm sm:text-base gap-2 bg-black hover:bg-gray-800 text-white shadow-lg hover:shadow-xl transition-all disabled:bg-gray-300 disabled:text-gray-500"
-                    size="lg"
-                  >
-                    {isProcessing ? (
-                      <>
-                        <div className="h-4 w-4 sm:h-5 sm:w-5 animate-spin rounded-full border-2 border-current border-t-transparent" />
-                        <span>Comparing...</span>
-                      </>
-                    ) : (
-                      <>
-                        <GitCompare className="h-4 w-4 sm:h-5 sm:w-5" />
-                        <span>Compare Files</span>
-                      </>
-                    )}
-                  </Button>
-
-                  {/* Comparison Results */}
-                  {comparisonComplete && (
-                    <Card className="border-2 shadow-lg">
-                      <CardHeader className="pb-3">
-                        <CardTitle className="flex items-center gap-2 text-base sm:text-lg">
-                          <GitCompare className="h-5 w-5" />
-                          <span>Comparison Results</span>
-                        </CardTitle>
-                        <CardDescription className="text-xs sm:text-sm">
-                          {file1?.name} vs {file2?.name}
-                        </CardDescription>
-                      </CardHeader>
-                      <CardContent className="space-y-4">
-                        {/* Summary Stats */}
-                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                          <div className="bg-green-50 border border-green-200 rounded-lg p-3 text-center">
-                            <p className="text-2xl font-bold text-green-700">
-                              {
-                                guestComparisons.filter(
-                                  (g) => g.status === "match"
-                                ).length
-                              }
-                            </p>
-                            <p className="text-xs text-green-600">Matching</p>
-                          </div>
-                          <div className="bg-orange-50 border border-orange-200 rounded-lg p-3 text-center">
-                            <p className="text-2xl font-bold text-orange-700">
-                              {
-                                guestComparisons.filter(
-                                  (g) => g.status === "different"
-                                ).length
-                              }
-                            </p>
-                            <p className="text-xs text-orange-600">Different</p>
-                          </div>
-                          <div className="bg-red-50 border border-red-200 rounded-lg p-3 text-center">
-                            <p className="text-2xl font-bold text-red-700">
-                              {
-                                guestComparisons.filter(
-                                  (g) => g.status === "only-file1"
-                                ).length
-                              }
-                            </p>
-                            <p className="text-xs text-red-600">
-                              Only in File 1
-                            </p>
-                          </div>
-                          <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 text-center">
-                            <p className="text-2xl font-bold text-blue-700">
-                              {
-                                guestComparisons.filter(
-                                  (g) => g.status === "only-file2"
-                                ).length
-                              }
-                            </p>
-                            <p className="text-xs text-blue-600">
-                              Only in File 2
-                            </p>
-                          </div>
-                        </div>
-
-                        {/* Filters */}
-                        <div className="flex flex-wrap gap-2">
-                          {/* Status Filter */}
-                          <Dialog>
-                            <DialogTrigger asChild>
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                className="text-sm gap-1"
-                              >
-                                <Filter className="h-3.5 w-3.5" />
-                                Status{" "}
-                                {compareFilterStatuses.length > 0 &&
-                                  `(${compareFilterStatuses.length})`}
-                              </Button>
-                            </DialogTrigger>
-                            <DialogContent className="max-w-xs">
-                              <DialogHeader>
-                                <DialogTitle>Filter by Status</DialogTitle>
-                              </DialogHeader>
-                              <div className="space-y-2">
-                                {[
-                                  {
-                                    value: "match",
-                                    label: "Matching",
-                                    color: "text-green-600",
-                                  },
-                                  {
-                                    value: "different",
-                                    label: "Different",
-                                    color: "text-orange-600",
-                                  },
-                                  {
-                                    value: "only-file1",
-                                    label: "Only in File 1",
-                                    color: "text-red-600",
-                                  },
-                                  {
-                                    value: "only-file2",
-                                    label: "Only in File 2",
-                                    color: "text-blue-600",
-                                  },
-                                ].map((s) => (
-                                  <div
-                                    key={s.value}
-                                    className="flex items-center space-x-2"
-                                  >
-                                    <Checkbox
-                                      id={`status-${s.value}`}
-                                      checked={compareFilterStatuses.includes(
-                                        s.value
-                                      )}
-                                      onCheckedChange={(checked) => {
-                                        if (checked) {
-                                          setCompareFilterStatuses((prev) => [
-                                            ...prev,
-                                            s.value,
-                                          ]);
-                                        } else {
-                                          setCompareFilterStatuses((prev) =>
-                                            prev.filter((x) => x !== s.value)
-                                          );
-                                        }
-                                      }}
-                                    />
-                                    <Label
-                                      htmlFor={`status-${s.value}`}
-                                      className={`cursor-pointer ${s.color}`}
-                                    >
-                                      {s.label}
-                                    </Label>
-                                  </div>
-                                ))}
-                                <div className="pt-2 flex gap-2">
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    onClick={() =>
-                                      setCompareFilterStatuses([
-                                        "match",
-                                        "different",
-                                        "only-file1",
-                                        "only-file2",
-                                      ])
-                                    }
-                                  >
-                                    All
-                                  </Button>
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    onClick={() => setCompareFilterStatuses([])}
-                                  >
-                                    Clear
-                                  </Button>
-                                </div>
-                              </div>
-                            </DialogContent>
-                          </Dialog>
-
-                          {/* Terminal Filter */}
-                          <Dialog>
-                            <DialogTrigger asChild>
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                className="text-sm gap-1"
-                              >
-                                <Building2 className="h-3.5 w-3.5" />
-                                Terminal{" "}
-                                {compareFilterTerminals.length > 0 &&
-                                  `(${compareFilterTerminals.length})`}
-                              </Button>
-                            </DialogTrigger>
-                            <DialogContent className="max-w-xs">
-                              <DialogHeader>
-                                <DialogTitle>Filter by Terminal</DialogTitle>
-                              </DialogHeader>
-                              <div className="space-y-2 max-h-[300px] overflow-y-auto">
-                                {[
-                                  ...new Set([
-                                    ...guestComparisons
-                                      .map((g) => g.file1Data.terminal)
-                                      .filter(Boolean),
-                                    ...guestComparisons
-                                      .map((g) => g.file2Data.terminal)
-                                      .filter(Boolean),
-                                  ]),
-                                ].map((t) => (
-                                  <div
-                                    key={t}
-                                    className="flex items-center space-x-2"
-                                  >
-                                    <Checkbox
-                                      id={`terminal-${t}`}
-                                      checked={compareFilterTerminals.includes(
-                                        t
-                                      )}
-                                      onCheckedChange={(checked) => {
-                                        if (checked) {
-                                          setCompareFilterTerminals((prev) => [
-                                            ...prev,
-                                            t,
-                                          ]);
-                                        } else {
-                                          setCompareFilterTerminals((prev) =>
-                                            prev.filter((x) => x !== t)
-                                          );
-                                        }
-                                      }}
-                                    />
-                                    <Label
-                                      htmlFor={`terminal-${t}`}
-                                      className="cursor-pointer"
-                                    >
-                                      {t}
-                                    </Label>
-                                  </div>
-                                ))}
-                                <div className="pt-2 flex gap-2">
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    onClick={() => {
-                                      const allTerminals = [
-                                        ...new Set([
-                                          ...guestComparisons
-                                            .map((g) => g.file1Data.terminal)
-                                            .filter(Boolean),
-                                          ...guestComparisons
-                                            .map((g) => g.file2Data.terminal)
-                                            .filter(Boolean),
-                                        ]),
-                                      ];
-                                      setCompareFilterTerminals(allTerminals);
-                                    }}
-                                  >
-                                    All
-                                  </Button>
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    onClick={() =>
-                                      setCompareFilterTerminals([])
-                                    }
-                                  >
-                                    Clear
-                                  </Button>
-                                </div>
-                              </div>
-                            </DialogContent>
-                          </Dialog>
-
-                          {/* Date Filter */}
-                          <Dialog>
-                            <DialogTrigger asChild>
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                className="text-sm gap-1"
-                              >
-                                <Calendar className="h-3.5 w-3.5" />
-                                Date{" "}
-                                {compareFilterDates.length > 0 &&
-                                  `(${compareFilterDates.length})`}
-                              </Button>
-                            </DialogTrigger>
-                            <DialogContent className="max-w-xs">
-                              <DialogHeader>
-                                <DialogTitle>Filter by Date</DialogTitle>
-                              </DialogHeader>
-                              <div className="space-y-2 max-h-[300px] overflow-y-auto">
-                                {[
-                                  ...new Set([
-                                    ...guestComparisons
-                                      .map((g) => g.file1Data.arrivalDate)
-                                      .filter(Boolean),
-                                    ...guestComparisons
-                                      .map((g) => g.file2Data.arrivalDate)
-                                      .filter(Boolean),
-                                    ...guestComparisons
-                                      .map((g) => g.file1Data.departDate)
-                                      .filter(Boolean),
-                                    ...guestComparisons
-                                      .map((g) => g.file2Data.departDate)
-                                      .filter(Boolean),
-                                  ]),
-                                ]
-                                  .sort()
-                                  .map((d) => (
-                                    <div
-                                      key={d}
-                                      className="flex items-center space-x-2"
-                                    >
-                                      <Checkbox
-                                        id={`date-${d}`}
-                                        checked={compareFilterDates.includes(d)}
-                                        onCheckedChange={(checked) => {
-                                          if (checked) {
-                                            setCompareFilterDates((prev) => [
-                                              ...prev,
-                                              d,
-                                            ]);
-                                          } else {
-                                            setCompareFilterDates((prev) =>
-                                              prev.filter((x) => x !== d)
-                                            );
-                                          }
-                                        }}
-                                      />
-                                      <Label
-                                        htmlFor={`date-${d}`}
-                                        className="cursor-pointer"
-                                      >
-                                        {d}
-                                      </Label>
-                                    </div>
-                                  ))}
-                                <div className="pt-2 flex gap-2">
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    onClick={() => {
-                                      const allDates = [
-                                        ...new Set([
-                                          ...guestComparisons
-                                            .map((g) => g.file1Data.arrivalDate)
-                                            .filter(Boolean),
-                                          ...guestComparisons
-                                            .map((g) => g.file2Data.arrivalDate)
-                                            .filter(Boolean),
-                                          ...guestComparisons
-                                            .map((g) => g.file1Data.departDate)
-                                            .filter(Boolean),
-                                          ...guestComparisons
-                                            .map((g) => g.file2Data.departDate)
-                                            .filter(Boolean),
-                                        ]),
-                                      ];
-                                      setCompareFilterDates(allDates);
-                                    }}
-                                  >
-                                    All
-                                  </Button>
-                                  <Button
-                                    size="sm"
-                                    variant="outline"
-                                    onClick={() => setCompareFilterDates([])}
-                                  >
-                                    Clear
-                                  </Button>
-                                </div>
-                              </div>
-                            </DialogContent>
-                          </Dialog>
-
-                          {/* Clear All Filters */}
-                          {(compareFilterStatuses.length > 0 ||
-                            compareFilterTerminals.length > 0 ||
-                            compareFilterDates.length > 0) && (
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="text-sm text-red-600 hover:text-red-700"
-                              onClick={() => {
-                                setCompareFilterStatuses([]);
-                                setCompareFilterTerminals([]);
-                                setCompareFilterDates([]);
-                              }}
-                            >
-                              <X className="h-3.5 w-3.5 mr-1" />
-                              Clear All
-                            </Button>
-                          )}
-                        </div>
-
-                        {/* Results Table */}
-                        <ScrollArea className="h-[500px] w-full rounded-md border">
-                          <div className="p-2">
-                            {guestComparisons
-                              .filter(
-                                (g) =>
-                                  compareFilterStatuses.length === 0 ||
-                                  compareFilterStatuses.includes(g.status)
-                              )
-                              .filter((g) => {
-                                if (compareFilterTerminals.length === 0)
-                                  return true;
-                                return (
-                                  compareFilterTerminals.includes(
-                                    g.file1Data.terminal
-                                  ) ||
-                                  compareFilterTerminals.includes(
-                                    g.file2Data.terminal
-                                  )
-                                );
-                              })
-                              .filter((g) => {
-                                if (compareFilterDates.length === 0)
-                                  return true;
-                                return (
-                                  compareFilterDates.includes(
-                                    g.file1Data.arrivalDate
-                                  ) ||
-                                  compareFilterDates.includes(
-                                    g.file2Data.arrivalDate
-                                  ) ||
-                                  compareFilterDates.includes(
-                                    g.file1Data.departDate
-                                  ) ||
-                                  compareFilterDates.includes(
-                                    g.file2Data.departDate
-                                  )
-                                );
-                              })
-                              .map((guest, idx) => (
-                                <div
-                                  key={guest.id}
-                                  className={`mb-3 rounded-lg border-2 p-3 ${
-                                    guest.status === "match"
-                                      ? "bg-green-50 border-green-200"
-                                      : guest.status === "different"
-                                      ? "bg-orange-50 border-orange-200"
-                                      : guest.status === "only-file1"
-                                      ? "bg-red-50 border-red-200"
-                                      : "bg-blue-50 border-blue-200"
-                                  }`}
-                                >
-                                  {/* Guest Header */}
-                                  <div className="flex items-center justify-between mb-2">
-                                    <div className="flex items-center gap-2">
-                                      <User className="h-4 w-4" />
-                                      <span className="font-semibold text-sm">
-                                        {guest.name}
-                                      </span>
-                                      {guest.documentNumber && (
-                                        <Badge
-                                          variant="outline"
-                                          className="text-xs"
-                                        >
-                                          {guest.documentNumber}
-                                        </Badge>
-                                      )}
-                                    </div>
-                                    <Badge
-                                      variant={
-                                        guest.status === "match"
-                                          ? "default"
-                                          : guest.status === "different"
-                                          ? "secondary"
-                                          : "destructive"
-                                      }
-                                      className={`text-xs ${
-                                        guest.status === "match"
-                                          ? "bg-green-600"
-                                          : guest.status === "only-file2"
-                                          ? "bg-blue-600"
-                                          : ""
-                                      }`}
-                                    >
-                                      {guest.status === "match"
-                                        ? "✓ Match"
-                                        : guest.status === "different"
-                                        ? "⚠ Different"
-                                        : guest.status === "only-file1"
-                                        ? `Only in ${
-                                            file1?.name?.split(".")[0] ||
-                                            "File 1"
-                                          }`
-                                        : `Only in ${
-                                            file2?.name?.split(".")[0] ||
-                                            "File 2"
-                                          }`}
-                                    </Badge>
-                                  </div>
-
-                                  {/* Field Comparison Table */}
-                                  {(guest.status === "different" ||
-                                    guest.status === "match") && (
-                                    <div className="overflow-x-auto">
-                                      <table className="w-full text-xs">
-                                        <thead>
-                                          <tr className="border-b">
-                                            <th className="text-left p-1.5 font-medium text-gray-600 w-1/4">
-                                              Field
-                                            </th>
-                                            <th className="text-left p-1.5 font-medium text-gray-600 w-[37.5%]">
-                                              {file1?.name?.split(".")[0] ||
-                                                "File 1"}
-                                            </th>
-                                            <th className="text-left p-1.5 font-medium text-gray-600 w-[37.5%]">
-                                              {file2?.name?.split(".")[0] ||
-                                                "File 2"}
-                                            </th>
-                                          </tr>
-                                        </thead>
-                                        <tbody>
-                                          {compareConfig.fieldsToCompare.map(
-                                            (field) => {
-                                              const v1 =
-                                                guest.file1Data[field] || "";
-                                              const v2 =
-                                                guest.file2Data[field] || "";
-                                              const isDiff =
-                                                guest.differences.includes(
-                                                  field
-                                                );
-                                              const fieldLabel =
-                                                {
-                                                  fullName: "Name",
-                                                  documentNumber: "Document #",
-                                                  nationality: "Nationality",
-                                                  position: "Position",
-                                                  terminal: "Terminal",
-                                                  hotel: "Hotel",
-                                                  remarks: "Remarks",
-                                                  arrivalDate: "Arrival Date",
-                                                  arrivalTime: "Arrival Time",
-                                                  arrivalFlight:
-                                                    "Arrival Flight",
-                                                  departDate: "Depart Date",
-                                                  departTime: "Depart Time",
-                                                  departFlight: "Depart Flight",
-                                                }[field] || field;
-
-                                              if (!v1 && !v2) return null;
-
-                                              return (
-                                                <tr
-                                                  key={field}
-                                                  className={
-                                                    isDiff
-                                                      ? "bg-yellow-100"
-                                                      : ""
-                                                  }
-                                                >
-                                                  <td className="p-1.5 font-medium text-gray-700">
-                                                    {fieldLabel}
-                                                  </td>
-                                                  <td
-                                                    className={`p-1.5 ${
-                                                      isDiff
-                                                        ? "text-red-700 font-semibold"
-                                                        : ""
-                                                    }`}
-                                                  >
-                                                    {String(v1) || "-"}
-                                                  </td>
-                                                  <td
-                                                    className={`p-1.5 ${
-                                                      isDiff
-                                                        ? "text-blue-700 font-semibold"
-                                                        : ""
-                                                    }`}
-                                                  >
-                                                    {String(v2) || "-"}
-                                                  </td>
-                                                </tr>
-                                              );
-                                            }
-                                          )}
-                                        </tbody>
-                                      </table>
-                                    </div>
-                                  )}
-
-                                  {/* Only in one file - show that file's data */}
-                                  {(guest.status === "only-file1" ||
-                                    guest.status === "only-file2") && (
-                                    <div className="text-xs mt-2">
-                                      {/* Always show arrival/departure date and time prominently */}
-                                      {(() => {
-                                        const data =
-                                          guest.status === "only-file1"
-                                            ? guest.file1Data
-                                            : guest.file2Data;
-                                        const arrDate = data.arrivalDate;
-                                        const arrTime = data.arrivalTime;
-                                        const arrFlight = data.arrivalFlight;
-                                        const depDate = data.departDate;
-                                        const depTime = data.departTime;
-                                        const depFlight = data.departFlight;
-
-                                        return (
-                                          <div className="flex flex-wrap gap-2 mb-2">
-                                            {(arrDate ||
-                                              arrTime ||
-                                              arrFlight) && (
-                                              <Badge
-                                                variant="outline"
-                                                className="gap-1 text-xs bg-green-50"
-                                              >
-                                                <PlaneLanding className="h-3 w-3" />
-                                                {arrDate && (
-                                                  <span>{String(arrDate)}</span>
-                                                )}
-                                                {arrTime && (
-                                                  <span>{String(arrTime)}</span>
-                                                )}
-                                                {arrFlight && (
-                                                  <span>
-                                                    ({String(arrFlight)})
-                                                  </span>
-                                                )}
-                                              </Badge>
-                                            )}
-                                            {(depDate ||
-                                              depTime ||
-                                              depFlight) && (
-                                              <Badge
-                                                variant="outline"
-                                                className="gap-1 text-xs bg-orange-50"
-                                              >
-                                                <PlaneTakeoff className="h-3 w-3" />
-                                                {depDate && (
-                                                  <span>{String(depDate)}</span>
-                                                )}
-                                                {depTime && (
-                                                  <span>{String(depTime)}</span>
-                                                )}
-                                                {depFlight && (
-                                                  <span>
-                                                    ({String(depFlight)})
-                                                  </span>
-                                                )}
-                                              </Badge>
-                                            )}
-                                          </div>
-                                        );
-                                      })()}
-
-                                      {/* Show other fields */}
-                                      <div className="space-y-1">
-                                        {compareConfig.fieldsToCompare
-                                          .filter(
-                                            (f) =>
-                                              ![
-                                                "arrivalDate",
-                                                "arrivalTime",
-                                                "arrivalFlight",
-                                                "departDate",
-                                                "departTime",
-                                                "departFlight",
-                                              ].includes(f)
-                                          )
-                                          .map((field) => {
-                                            const data =
-                                              guest.status === "only-file1"
-                                                ? guest.file1Data
-                                                : guest.file2Data;
-                                            const v = data[field];
-                                            if (!v) return null;
-                                            const fieldLabel =
-                                              {
-                                                fullName: "Name",
-                                                documentNumber: "Document #",
-                                                nationality: "Nationality",
-                                                position: "Position",
-                                                terminal: "Terminal",
-                                                hotel: "Hotel",
-                                                remarks: "Remarks",
-                                              }[field] || field;
-                                            return (
-                                              <div
-                                                key={field}
-                                                className="flex gap-2"
-                                              >
-                                                <span className="font-medium text-gray-600 w-24">
-                                                  {fieldLabel}:
-                                                </span>
-                                                <span>{String(v)}</span>
-                                              </div>
-                                            );
-                                          })}
-                                      </div>
-                                    </div>
-                                  )}
-                                </div>
-                              ))}
-                          </div>
-                        </ScrollArea>
-                      </CardContent>
-                    </Card>
-                  )}
-                </CardContent>
+                <CompareTab
+                  file1={file1}
+                  setFile1={setFile1}
+                  file2={file2}
+                  setFile2={setFile2}
+                  columnsFile1={columnsFile1}
+                  setColumnsFile1={setColumnsFile1}
+                  columnsFile2={columnsFile2}
+                  setColumnsFile2={setColumnsFile2}
+                  compareMappingFile1={compareMappingFile1}
+                  setCompareMappingFile1={setCompareMappingFile1}
+                  compareMappingFile2={compareMappingFile2}
+                  setCompareMappingFile2={setCompareMappingFile2}
+                  compareConfig={compareConfig}
+                  setCompareConfig={setCompareConfig}
+                  cleanupRules={cleanupRules}
+                  savedCompareMappings={savedCompareMappings}
+                  setSavedCompareMappings={setSavedCompareMappings}
+                  newCompareMappingName={newCompareMappingName}
+                  setNewCompareMappingName={setNewCompareMappingName}
+                  compareFilterDates={compareFilterDates}
+                  setCompareFilterDates={setCompareFilterDates}
+                  compareFilterTerminals={compareFilterTerminals}
+                  setCompareFilterTerminals={setCompareFilterTerminals}
+                  compareFilterStatuses={compareFilterStatuses}
+                  setCompareFilterStatuses={setCompareFilterStatuses}
+                  guestComparisons={guestComparisons}
+                  comparisonComplete={comparisonComplete}
+                  isProcessing={isProcessing}
+                  showCompareMappingModal={showCompareMappingModal}
+                  setShowCompareMappingModal={setShowCompareMappingModal}
+                  showCleanupModal={showCleanupModal}
+                  setShowCleanupModal={setShowCleanupModal}
+                  compareExcelFiles={compareExcelFiles}
+                />
               </TabsContent>
             </Tabs>
           </CardHeader>
