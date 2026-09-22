@@ -529,14 +529,7 @@ export function CompareTab({
                         key={f.key}
                         className="grid grid-cols-3 gap-2 items-center"
                       >
-                        <Label className="flex items-center gap-2 text-sm">
-                          {f.label}
-                          {f.required && (
-                            <Badge variant="destructive" className="text-xs">
-                              Required
-                            </Badge>
-                          )}
-                        </Label>
+                        <Label className="text-sm">{f.label}</Label>
                         <Select
                           value={
                             compareMappingFile1[
