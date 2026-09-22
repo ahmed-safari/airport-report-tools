@@ -8,6 +8,9 @@ export type ExcelData = {
 
 export type ColumnMapping = {
   fullName?: string;
+  nameTitle?: string;
+  firstName?: string;
+  lastName?: string;
   nationality?: string;
   position?: string;
   documentNumber?: string;

@@ -3,7 +3,7 @@
 
 "use client";
 
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import * as XLSX from "xlsx";
 import { logUsage } from "@/lib/logger";
 
@@ -113,9 +113,11 @@ import {
 // Utility functions from lib
 import {
   readExcelBuffer,
-  autoDetectColumns,
+  autoDetectColumns as detectColumnMapping,
+  resolvePersonName,
   formatExcelDate,
   formatExcelTime,
+  formatExcelValue,
   applyCleanupRules as applyCleanupRulesUtil,
   extractAvailableDates,
 } from "@/lib/excel-utils";
@@ -133,6 +135,67 @@ import {
 // Tab Components
 import { MessagesTab } from "@/components/tabs/MessagesTab";
 import { CompareTab } from "@/components/tabs/CompareTab";
+
+const RESERVED_TEMPLATE_TOKENS = new Set([
+  "header",
+  "mode",
+  "date",
+  "time",
+  "passengers",
+  "passengersDetailed",
+  "passengerCount",
+  "passengerNames",
+  "positions",
+  "documentNumbers",
+  "category",
+  "categories",
+  "nationality",
+  "delegation",
+  "flight",
+  "flightTime",
+  "flightInfo",
+  "terminal",
+  "hotel",
+  "baggage",
+  "luggage",
+  "remarks",
+]);
+
+const MESSAGE_FIELD_TOKENS = [
+  { token: "header", label: "Header" },
+  { token: "date", label: "Date" },
+  { token: "time", label: "Time" },
+  { token: "passengers", label: "Passengers" },
+  { token: "passengerNames", label: "Names" },
+  { token: "passengerCount", label: "Count" },
+  { token: "nationality", label: "Delegation" },
+  { token: "flight", label: "Flight" },
+  { token: "terminal", label: "Terminal" },
+  { token: "hotel", label: "Hotel" },
+  { token: "remarks", label: "Remarks" },
+  { token: "positions", label: "Positions" },
+  { token: "documentNumbers", label: "Documents" },
+  { token: "category", label: "Category" },
+];
+
+const columnTemplateToken = (column: string) =>
+  RESERVED_TEMPLATE_TOKENS.has(column) ? `column:${column}` : column;
+
+const formatGroupColumn = (
+  rows: any[],
+  columnName: string,
+  cleanup: (value: string, field: string) => string
+) => {
+  const values = rows.map((row) => {
+    const raw = row?.[columnName];
+    if (raw === undefined || raw === null || raw === "") return "";
+    return cleanup(formatExcelValue(raw, columnName), columnName).trim();
+  });
+  const filled = values.filter(Boolean);
+  if (filled.length === 0) return "-";
+  if (new Set(filled).size === 1) return filled[0];
+  return values.map((value, index) => `${index + 1}) ${value || "-"}`).join("\n");
+};
 
 // ============================================================================
 // MAIN COMPONENT
@@ -180,6 +243,38 @@ export default function AirportReportsTools() {
     customTemplate: DEFAULT_CUSTOM_TEMPLATE,
     useCustomTemplate: false,
   });
+  const templateCursorRef = useRef<{ start: number; end: number } | null>(
+    null
+  );
+
+  const rememberTemplateCursor = (
+    element: HTMLTextAreaElement | null
+  ) => {
+    if (!element) return;
+    templateCursorRef.current = {
+      start: element.selectionStart ?? element.value.length,
+      end: element.selectionEnd ?? element.value.length,
+    };
+  };
+
+  const insertTemplateToken = (token: string) => {
+    setMessageConfig((prev) => {
+      const current = prev.customTemplate || "";
+      const start = templateCursorRef.current?.start ?? current.length;
+      const end = templateCursorRef.current?.end ?? current.length;
+      const before = current.slice(0, start);
+      const needsBreak = before.length > 0 && !/\s$/.test(before);
+      const insertion = `${needsBreak ? "\n" : ""}{{${token}}}`;
+      const next = before + insertion + current.slice(end);
+      const caret = start + insertion.length;
+      templateCursorRef.current = { start: caret, end: caret };
+      return {
+        ...prev,
+        useCustomTemplate: true,
+        customTemplate: next,
+      };
+    });
+  };
 
   const [exportConfig, setExportConfig] = useState<ExportConfig>({
     groupBy: "date",
@@ -440,34 +535,7 @@ export default function AirportReportsTools() {
   };
 
   const autoDetectColumns = (cols: string[]) => {
-    const mapping: ColumnMapping = {};
-
-    const patterns = {
-      fullName: /name|الاسم|full.*name/i,
-      nationality: /delegation|nationality|country|الوفد|الدولة/i,
-      position: /position|المسمى|title/i,
-      documentNumber: /document|passport|رقم.*الجواز|doc.*no/i,
-      category: /category|الكشف|القائمة/i,
-      terminal: /terminal|الصالة/i,
-      arrivalDate: /arrival.*date|تاريخ.*الوصول/i,
-      arrivalTime: /arrival.*time|وقت.*الوصول/i,
-      arrivalFlight: /arrival.*flight|رحلة.*الوصول/i,
-      departDate: /dep.*date|departure.*date|تاريخ.*المغادرة/i,
-      departTime: /dep.*time|departure.*time|وقت.*المغادرة/i,
-      departFlight: /dep.*flight|departure.*flight|رحلة.*المغادرة/i,
-      hotel: /hotel|الفندق/i,
-      remarks: /remarks|ملاحظات|notes/i,
-    };
-
-    cols.forEach((col) => {
-      Object.entries(patterns).forEach(([key, pattern]) => {
-        if (pattern.test(col) && !mapping[key as keyof ColumnMapping]) {
-          mapping[key as keyof ColumnMapping] = col;
-        }
-      });
-    });
-
-    setColumnMapping(mapping);
+    setColumnMapping(detectColumnMapping(cols));
   };
 
   // Get available dates from data
@@ -761,12 +829,10 @@ export default function AirportReportsTools() {
 
         // Get passengers
         const passengers = groupRows.map((row) => ({
-          name: applyCleanupRules(
-            columnMapping.fullName
-              ? row[columnMapping.fullName] || "N/A"
-              : "N/A",
-            columnMapping.fullName || "fullName"
-          ),
+          name:
+            resolvePersonName(row, columnMapping, (value, column) =>
+              applyCleanupRules(value, column)
+            ) || "N/A",
           position: applyCleanupRules(
             columnMapping.position ? row[columnMapping.position] || "" : "",
             columnMapping.position || "position"
@@ -907,6 +973,26 @@ export default function AirportReportsTools() {
           } else {
             template = template.replace(/\{\{remarks\}\}/g, "-");
           }
+
+          template = template.replace(/\{\{([^{}]+)\}\}/g, (match, rawName) => {
+            const name = String(rawName).trim();
+            const columnName = name.startsWith("column:")
+              ? name.slice("column:".length)
+              : name;
+            if (
+              !name.startsWith("column:") &&
+              RESERVED_TEMPLATE_TOKENS.has(columnName)
+            ) {
+              return match;
+            }
+            const found =
+              columns.find((col) => col === columnName) ||
+              columns.find(
+                (col) => col.toLowerCase() === columnName.toLowerCase()
+              );
+            if (!found) return match;
+            return formatGroupColumn(groupRows, found, applyCleanupRules);
+          });
 
           finalMessage = template;
         } else {
@@ -1194,6 +1280,9 @@ export default function AirportReportsTools() {
         field: string,
         mapping: CompareColumnMapping
       ) => {
+        if (field === "fullName") {
+          return resolvePersonName(row, mapping);
+        }
         const col = mapping[field as keyof CompareColumnMapping];
         if (col && row) return row[col] ?? "";
         return "";
@@ -1813,7 +1902,30 @@ export default function AirportReportsTools() {
                     key: "fullName",
                     label: "Full Name",
                     icon: User,
-                    required: true,
+                    required: !(
+                      columnMapping.nameTitle ||
+                      columnMapping.firstName ||
+                      columnMapping.lastName
+                    ),
+                  },
+                  {
+                    key: "nameTitle",
+                    label: "Title",
+                    icon: User,
+                    required: false,
+                    hint: "Optional. Title, First, and Last are joined when Full Name is empty.",
+                  },
+                  {
+                    key: "firstName",
+                    label: "First Name",
+                    icon: User,
+                    required: false,
+                  },
+                  {
+                    key: "lastName",
+                    label: "Last Name",
+                    icon: User,
+                    required: false,
                   },
                   {
                     key: "nationality",
@@ -1911,6 +2023,11 @@ export default function AirportReportsTools() {
                           </Badge>
                         )}
                       </Label>
+                      {"hint" in field && field.hint && (
+                        <p className="text-xs text-muted-foreground">
+                          {field.hint}
+                        </p>
+                      )}
                       <Select
                         value={
                           columnMapping[field.key as keyof ColumnMapping] ||
@@ -2072,7 +2189,67 @@ export default function AirportReportsTools() {
                     </div>
                   </AccordionTrigger>
                   <AccordionContent>
-                    <div className="space-y-4 pt-4">
+                    <div className="flex flex-col gap-4 pt-4">
+                      <div className="flex flex-col gap-2">
+                        <Label>Sheet columns</Label>
+                        <p className="text-xs text-muted-foreground">
+                          Tap a column to drop it into the message. If everyone
+                          in the group has the same value, it is shown once.
+                          Otherwise each passenger is listed.
+                        </p>
+                        {columns.length > 0 ? (
+                          <div className="flex flex-wrap gap-2">
+                            {columns.map((column) => (
+                              <Button
+                                key={column}
+                                type="button"
+                                variant="outline"
+                                size="lg"
+                                className="h-auto min-h-10 whitespace-normal px-3 text-left"
+                                onPointerDown={(event) => {
+                                  if (event.pointerType === "mouse") {
+                                    event.preventDefault();
+                                  }
+                                }}
+                                onClick={() =>
+                                  insertTemplateToken(columnTemplateToken(column))
+                                }
+                              >
+                                {column}
+                              </Button>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="text-sm text-muted-foreground">
+                            Upload a spreadsheet and its columns will appear
+                            here.
+                          </p>
+                        )}
+                      </div>
+
+                      <div className="flex flex-col gap-2">
+                        <Label>Message fields</Label>
+                        <div className="flex flex-wrap gap-2">
+                          {MESSAGE_FIELD_TOKENS.map((field) => (
+                            <Button
+                              key={field.token}
+                              type="button"
+                              variant="secondary"
+                              size="lg"
+                              className="h-auto min-h-10 whitespace-normal px-3"
+                              onPointerDown={(event) => {
+                                if (event.pointerType === "mouse") {
+                                  event.preventDefault();
+                                }
+                              }}
+                              onClick={() => insertTemplateToken(field.token)}
+                            >
+                              {field.label}
+                            </Button>
+                          ))}
+                        </div>
+                      </div>
+
                       <div className="flex items-center justify-between">
                         <Label
                           htmlFor="use-custom-template"
@@ -2093,7 +2270,7 @@ export default function AirportReportsTools() {
                       </div>
 
                       {messageConfig.useCustomTemplate && (
-                        <div className="space-y-2">
+                        <div className="flex flex-col gap-2">
                           <div className="flex items-center justify-between">
                             <Label>Template Content</Label>
                             <Button
@@ -2114,91 +2291,27 @@ export default function AirportReportsTools() {
                           <Textarea
                             value={messageConfig.customTemplate}
                             onChange={(e) => {
+                              rememberTemplateCursor(e.target);
                               setMessageConfig((prev) => ({
                                 ...prev,
                                 customTemplate: e.target.value,
                               }));
                             }}
-                            placeholder="Enter your custom template..."
+                            onSelect={(e) =>
+                              rememberTemplateCursor(e.currentTarget)
+                            }
+                            onKeyUp={(e) =>
+                              rememberTemplateCursor(e.currentTarget)
+                            }
+                            onClick={(e) =>
+                              rememberTemplateCursor(e.currentTarget)
+                            }
+                            onBlur={(e) =>
+                              rememberTemplateCursor(e.currentTarget)
+                            }
+                            placeholder="Tap a column above, or type here..."
                             className="font-mono text-sm min-h-[200px]"
                           />
-                          <div className="text-xs text-muted-foreground space-y-2">
-                            <p className="font-semibold">
-                              Available variables:
-                            </p>
-                            <div className="space-y-2">
-                              <div>
-                                <p className="font-medium text-gray-700 mb-1">
-                                  Basic Info:
-                                </p>
-                                <div className="grid grid-cols-2 gap-1 pl-2">
-                                  <span>
-                                    {`{{header}}`} - Arrival/Departure
-                                  </span>
-                                  <span>{`{{mode}}`} - arrival/departure</span>
-                                  <span>{`{{date}}`} - Date</span>
-                                  <span>{`{{time}}`} - Time</span>
-                                </div>
-                              </div>
-                              <div>
-                                <p className="font-medium text-gray-700 mb-1">
-                                  Passengers:
-                                </p>
-                                <div className="grid grid-cols-2 gap-1 pl-2">
-                                  <span>
-                                    {`{{passengers}}`} - Numbered list
-                                  </span>
-                                  <span>
-                                    {`{{passengersDetailed}}`} - Full details
-                                  </span>
-                                  <span>{`{{passengerCount}}`} - Count</span>
-                                  <span>
-                                    {`{{passengerNames}}`} - Names only
-                                  </span>
-                                  <span>
-                                    {`{{positions}}`} - Positions list
-                                  </span>
-                                  <span>
-                                    {`{{documentNumbers}}`} - Doc numbers
-                                  </span>
-                                  <span>{`{{category}}`} - Category</span>
-                                  <span>
-                                    {`{{categories}}`} - All categories
-                                  </span>
-                                </div>
-                              </div>
-                              <div>
-                                <p className="font-medium text-gray-700 mb-1">
-                                  Flight & Location:
-                                </p>
-                                <div className="grid grid-cols-2 gap-1 pl-2">
-                                  <span>{`{{nationality}}`} - Delegation</span>
-                                  <span>
-                                    {`{{delegation}}`} - Same as above
-                                  </span>
-                                  <span>{`{{flight}}`} - Flight number</span>
-                                  <span>
-                                    {`{{flightTime}}`} - Flight | Time
-                                  </span>
-                                  <span>
-                                    {`{{flightInfo}}`} - Full flight info
-                                  </span>
-                                  <span>{`{{terminal}}`} - Terminal</span>
-                                  <span>{`{{hotel}}`} - Hotel name</span>
-                                </div>
-                              </div>
-                              <div>
-                                <p className="font-medium text-gray-700 mb-1">
-                                  Other:
-                                </p>
-                                <div className="grid grid-cols-2 gap-1 pl-2">
-                                  <span>{`{{baggage}}`} - Luggage info</span>
-                                  <span>{`{{luggage}}`} - Same as above</span>
-                                  <span>{`{{remarks}}`} - Remarks</span>
-                                </div>
-                              </div>
-                            </div>
-                          </div>
                         </div>
                       )}
                     </div>

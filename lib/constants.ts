@@ -63,6 +63,28 @@ export const DEFAULT_COMPARE_CONFIG = {
   ],
 };
 
+// Name columns that are parts of a person name (Title, First, Last).
+// Checked before the generic full-name pattern so "First Name" is not treated as the full name.
+export const NAME_PART_PATTERNS: {
+  key: "nameTitle" | "firstName" | "lastName";
+  pattern: RegExp;
+}[] = [
+  {
+    key: "firstName",
+    pattern:
+      /^(first|first[\s_-]*name|given[\s_-]*name|forename|الاسم[\s_-]*(الأول|الاول))$/i,
+  },
+  {
+    key: "lastName",
+    pattern:
+      /^(last|last[\s_-]*name|surname|family[\s_-]*name|اسم[\s_-]*العائلة|الاسم[\s_-]*(الأخير|الاخير))$/i,
+  },
+  {
+    key: "nameTitle",
+    pattern: /^(title|salutation|honorific|name[\s_-]*title)$/i,
+  },
+];
+
 // Column mapping patterns for auto-detection
 export const COLUMN_PATTERNS = {
   fullName: /name|الاسم|full.*name/i,
@@ -84,6 +106,9 @@ export const COLUMN_PATTERNS = {
 // Field labels for display
 export const FIELD_LABELS: Record<string, string> = {
   fullName: "Name",
+  nameTitle: "Title",
+  firstName: "First Name",
+  lastName: "Last Name",
   documentNumber: "Document #",
   nationality: "Nationality",
   position: "Position",
@@ -120,6 +145,9 @@ export const ALL_COMPARE_FIELDS = [
 // Common fields (shared between arrival/departure)
 export const COMMON_MAPPING_FIELDS = [
   { key: "fullName", label: "Full Name", required: true },
+  { key: "nameTitle", label: "Title" },
+  { key: "firstName", label: "First Name" },
+  { key: "lastName", label: "Last Name" },
   { key: "nationality", label: "Nationality/Delegation" },
   { key: "position", label: "Position/Title" },
   { key: "documentNumber", label: "Document Number" },

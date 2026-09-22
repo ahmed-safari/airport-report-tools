@@ -516,8 +516,16 @@ export function CompareTab({
                     </div>
 
                     {/* Common Fields */}
+                    <p className="text-xs text-muted-foreground col-span-3">
+                      Map Full Name, or map Title, First, and Last. Empty parts
+                      are skipped, and a full-name column is used when it has a
+                      value.
+                    </p>
                     {[
-                      { key: "fullName", label: "Full Name", required: true },
+                      { key: "fullName", label: "Full Name" },
+                      { key: "nameTitle", label: "Title" },
+                      { key: "firstName", label: "First Name" },
+                      { key: "lastName", label: "Last Name" },
                       { key: "documentNumber", label: "Document Number" },
                       { key: "nationality", label: "Nationality" },
                       { key: "position", label: "Position" },

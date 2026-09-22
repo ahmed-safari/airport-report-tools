@@ -4,7 +4,7 @@ import {
   ProcessedMessage,
   CleanupRule,
 } from "./types";
-import { applyCleanupRules } from "./excel-utils";
+import { applyCleanupRules, resolvePersonName } from "./excel-utils";
 
 interface Passenger {
   name: string;
@@ -139,10 +139,10 @@ export const processExcelToMessages = (
 
     // Get passengers
     const passengers: Passenger[] = groupRows.map((row) => ({
-      name: cleanup(
-        columnMapping.fullName ? row[columnMapping.fullName] || "N/A" : "N/A",
-        columnMapping.fullName || "fullName"
-      ),
+      name:
+        resolvePersonName(row, columnMapping, (value, column) =>
+          cleanup(value, column)
+        ) || "N/A",
       position: cleanup(
         columnMapping.position ? row[columnMapping.position] || "" : "",
         columnMapping.position || "position"

@@ -1,6 +1,6 @@
 import * as XLSX from "xlsx";
 import { ColumnMapping, CompareColumnMapping, CleanupRule } from "./types";
-import { COLUMN_PATTERNS } from "./constants";
+import { COLUMN_PATTERNS, NAME_PART_PATTERNS } from "./constants";
 
 // ============================================================================
 // EXCEL READING & PARSING
@@ -29,8 +29,21 @@ export const readExcelBuffer = async (
 
 export const autoDetectColumns = (cols: string[]): ColumnMapping => {
   const mapping: ColumnMapping = {};
+  const claimed = new Set<string>();
 
   cols.forEach((col) => {
+    const header = col.trim();
+    for (const { key, pattern } of NAME_PART_PATTERNS) {
+      if (pattern.test(header) && !mapping[key]) {
+        mapping[key] = col;
+        claimed.add(col);
+        break;
+      }
+    }
+  });
+
+  cols.forEach((col) => {
+    if (claimed.has(col)) return;
     Object.entries(COLUMN_PATTERNS).forEach(([key, pattern]) => {
       if (pattern.test(col) && !mapping[key as keyof ColumnMapping]) {
         mapping[key as keyof ColumnMapping] = col;
@@ -39,6 +52,34 @@ export const autoDetectColumns = (cols: string[]): ColumnMapping => {
   });
 
   return mapping;
+};
+
+/**
+ * Resolve a person's name from a full-name column, or from Title / First / Last.
+ * Mapped parts are joined in that order. Empty parts are skipped, so two-part
+ * names (Title + Last, or First + Last) work the same way as three-part names.
+ * A non-empty full-name column takes priority.
+ * Optional transform runs on each source cell before joining (for cleanup rules).
+ */
+export const resolvePersonName = (
+  row: any,
+  mapping: ColumnMapping,
+  transform?: (value: string, column: string) => string
+): string => {
+  const read = (column?: string): string => {
+    if (!column || !row) return "";
+    const value = row[column];
+    if (value === undefined || value === null) return "";
+    const text = transform ? transform(String(value), column) : String(value);
+    return text.trim();
+  };
+
+  const full = read(mapping.fullName);
+  if (full) return full;
+
+  return [read(mapping.nameTitle), read(mapping.firstName), read(mapping.lastName)]
+    .filter(Boolean)
+    .join(" ");
 };
 
 // ============================================================================
@@ -168,6 +209,9 @@ export const getMappedValue = (
   field: string,
   mapping: CompareColumnMapping
 ): any => {
+  if (field === "fullName") {
+    return resolvePersonName(row, mapping);
+  }
   const col = mapping[field as keyof CompareColumnMapping];
   if (col && row) return row[col] ?? "";
   return "";
