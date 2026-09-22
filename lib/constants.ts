@@ -81,7 +81,7 @@ export const NAME_PART_PATTERNS: {
   },
   {
     key: "nameTitle",
-    pattern: /^(title|salutation|honorific|name[\s_-]*title)$/i,
+    pattern: /^(title|salutation|honorific|name[\s_-]*title|custom[\s_-]*title)$/i,
   },
 ];
 

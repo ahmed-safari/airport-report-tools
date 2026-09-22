@@ -11,16 +11,144 @@ export interface ReadExcelResult {
   columns: string[];
 }
 
+const HEADER_PATTERNS = [
+  ...NAME_PART_PATTERNS.map((entry) => entry.pattern),
+  ...Object.values(COLUMN_PATTERNS),
+];
+
+/**
+ * Some workbooks put a legend or title block above the real table.
+ * Pick the row that looks most like column headers.
+ */
+export const findHeaderRowIndex = (rows: any[][]): number => {
+  let bestIndex = 0;
+  let bestScore = 0;
+  const limit = Math.min(rows.length, 30);
+
+  for (let index = 0; index < limit; index++) {
+    const cells = (rows[index] || [])
+      .map((cell) => String(cell ?? "").trim())
+      .filter(Boolean);
+    if (cells.length < 3) continue;
+
+    let score = 0;
+    cells.forEach((cell) => {
+      if (HEADER_PATTERNS.some((pattern) => pattern.test(cell))) score += 2;
+    });
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestIndex = index;
+    }
+  }
+
+  return bestIndex;
+};
+
+export const sheetToRecords = (
+  worksheet: XLSX.WorkSheet
+): ReadExcelResult => {
+  const rows = XLSX.utils.sheet_to_json(worksheet, {
+    header: 1,
+    defval: "",
+    raw: true,
+  }) as any[][];
+
+  if (!rows.length) return { data: [], columns: [] };
+
+  const headerIndex = findHeaderRowIndex(rows);
+  const headerRow = rows[headerIndex] || [];
+  let lastColumn = headerRow.length - 1;
+  while (lastColumn >= 0 && String(headerRow[lastColumn] ?? "").trim() === "") {
+    lastColumn -= 1;
+  }
+
+  const columns: string[] = [];
+  const seen = new Map<string, number>();
+  for (let index = 0; index <= lastColumn; index++) {
+    const label = String(headerRow[index] ?? "").trim() || `Column ${index + 1}`;
+    const count = seen.get(label) || 0;
+    seen.set(label, count + 1);
+    columns.push(count === 0 ? label : `${label} ${count + 1}`);
+  }
+
+  const data = rows
+    .slice(headerIndex + 1)
+    .map((row) => {
+      const record: Record<string, any> = {};
+      columns.forEach((column, index) => {
+        record[column] = row?.[index] ?? "";
+      });
+      return record;
+    })
+    .filter((record) =>
+      columns.some((column) => String(record[column] ?? "").trim() !== "")
+    );
+
+  return { data, columns };
+};
+
 export const readExcelBuffer = async (
   buffer: ArrayBuffer
 ): Promise<ReadExcelResult> => {
   const workbook = XLSX.read(buffer);
   const sheetName = workbook.SheetNames[0];
   const worksheet = workbook.Sheets[sheetName];
-  const jsonData = XLSX.utils.sheet_to_json(worksheet, { defval: "" });
+  return sheetToRecords(worksheet);
+};
 
-  const columns = jsonData.length > 0 ? Object.keys(jsonData[0] as any) : [];
-  return { data: jsonData, columns };
+/**
+ * Normalize a sheet date to YYYY-MM-DD.
+ * Accepts Excel serials, ISO dates, and day/month/year text such as 15/09/2026.
+ */
+export const toISODateString = (value: any): string => {
+  if (value === undefined || value === null || value === "") return "";
+
+  if (value instanceof Date && !isNaN(value.getTime())) {
+    const year = value.getFullYear();
+    const month = String(value.getMonth() + 1).padStart(2, "0");
+    const day = String(value.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  }
+
+  if (typeof value === "number" && value > 20000 && value < 80000) {
+    const date = new Date(Math.round((value - 25569) * 86400 * 1000));
+    if (isNaN(date.getTime())) return "";
+    return date.toISOString().slice(0, 10);
+  }
+
+  const text = String(value).trim();
+  const iso = text.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (iso) {
+    return `${iso[1]}-${iso[2].padStart(2, "0")}-${iso[3].padStart(2, "0")}`;
+  }
+
+  const parts = text.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})$/);
+  if (parts) {
+    let day = Number(parts[1]);
+    let month = Number(parts[2]);
+    let year = Number(parts[3]);
+    if (year < 100) year += 2000;
+    if (month > 12 && day <= 12) {
+      const swap = day;
+      day = month;
+      month = swap;
+    }
+    if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+      return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+    }
+    return "";
+  }
+
+  const parsed = new Date(text);
+  if (!isNaN(parsed.getTime())) {
+    const year = parsed.getFullYear();
+    const month = String(parsed.getMonth() + 1).padStart(2, "0");
+    const day = String(parsed.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  }
+
+  return "";
 };
 
 // ============================================================================
@@ -301,20 +429,8 @@ export const extractAvailableDates = (
 
   const dates = new Set<string>();
   excelData.forEach((row) => {
-    const dateValue = row[dateField];
-    if (dateValue) {
-      let date: Date | null = null;
-      if (typeof dateValue === "number") {
-        // Excel date number
-        date = new Date((dateValue - 25569) * 86400 * 1000);
-      } else {
-        date = new Date(dateValue);
-      }
-
-      if (date && !isNaN(date.getTime())) {
-        dates.add(date.toISOString().split("T")[0]);
-      }
-    }
+    const iso = toISODateString(row[dateField]);
+    if (iso) dates.add(iso);
   });
 
   return Array.from(dates).sort();

@@ -4,7 +4,7 @@ import {
   ProcessedMessage,
   CleanupRule,
 } from "./types";
-import { applyCleanupRules, resolvePersonName } from "./excel-utils";
+import { applyCleanupRules, resolvePersonName, toISODateString } from "./excel-utils";
 
 interface Passenger {
   name: string;
@@ -57,17 +57,8 @@ export const processExcelToMessages = (
   let filteredData = [...excelData];
   if (selectedDates.length > 0 && dateField) {
     filteredData = filteredData.filter((row) => {
-      const dateValue = row[dateField];
-      if (!dateValue) return false;
-
-      let date: Date | null = null;
-      if (typeof dateValue === "number") {
-        date = new Date((dateValue - 25569) * 86400 * 1000);
-      } else {
-        date = new Date(dateValue);
-      }
-
-      return date && selectedDates.includes(date.toISOString().split("T")[0]);
+      const iso = toISODateString(row[dateField]);
+      return iso !== "" && selectedDates.includes(iso);
     });
   }
 
@@ -110,16 +101,7 @@ export const processExcelToMessages = (
     let time = "TBD";
 
     if (dateField && firstRow[dateField]) {
-      const dateValue = firstRow[dateField];
-      let dateObj: Date | null = null;
-      if (typeof dateValue === "number") {
-        dateObj = new Date((dateValue - 25569) * 86400 * 1000);
-      } else {
-        dateObj = new Date(dateValue);
-      }
-      if (dateObj && !isNaN(dateObj.getTime())) {
-        date = dateObj.toISOString().split("T")[0];
-      }
+      date = toISODateString(firstRow[dateField]);
     }
 
     if (timeField && firstRow[timeField]) {

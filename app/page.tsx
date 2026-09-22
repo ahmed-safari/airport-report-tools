@@ -113,8 +113,10 @@ import {
 // Utility functions from lib
 import {
   readExcelBuffer,
+  sheetToRecords,
   autoDetectColumns as detectColumnMapping,
   resolvePersonName,
+  toISODateString,
   formatExcelDate,
   formatExcelTime,
   formatExcelValue,
@@ -506,13 +508,9 @@ export default function AirportReportsTools() {
   const readExcelFile = async (file: File) => {
     try {
       const data = await file.arrayBuffer();
-      const workbook = XLSX.read(data);
-      const sheetName = workbook.SheetNames[0];
-      const worksheet = workbook.Sheets[sheetName];
-      const jsonData = XLSX.utils.sheet_to_json(worksheet, { defval: "" });
+      const { data: jsonData, columns: cols } = await readExcelBuffer(data);
 
       if (jsonData.length > 0) {
-        const cols = Object.keys(jsonData[0] as any);
         setColumns(cols);
         setExcelData(jsonData as ExcelData);
 
@@ -548,20 +546,8 @@ export default function AirportReportsTools() {
 
     const dates = new Set<string>();
     excelData.forEach((row) => {
-      const dateValue = row[dateField];
-      if (dateValue) {
-        let date: Date | null = null;
-        if (typeof dateValue === "number") {
-          // Excel date number
-          date = new Date((dateValue - 25569) * 86400 * 1000);
-        } else {
-          date = new Date(dateValue);
-        }
-
-        if (date && !isNaN(date.getTime())) {
-          dates.add(date.toISOString().split("T")[0]);
-        }
-      }
+      const iso = toISODateString(row[dateField]);
+      if (iso) dates.add(iso);
     });
 
     return Array.from(dates).sort();
@@ -721,19 +707,8 @@ export default function AirportReportsTools() {
       let filteredData = [...excelData];
       if (selectedDates.length > 0 && dateField) {
         filteredData = filteredData.filter((row) => {
-          const dateValue = row[dateField];
-          if (!dateValue) return false;
-
-          let date: Date | null = null;
-          if (typeof dateValue === "number") {
-            date = new Date((dateValue - 25569) * 86400 * 1000);
-          } else {
-            date = new Date(dateValue);
-          }
-
-          return (
-            date && selectedDates.includes(date.toISOString().split("T")[0])
-          );
+          const iso = toISODateString(row[dateField]);
+          return iso !== "" && selectedDates.includes(iso);
         });
       }
 
@@ -800,16 +775,7 @@ export default function AirportReportsTools() {
         let time = "TBD";
 
         if (dateField && firstRow[dateField]) {
-          const dateValue = firstRow[dateField];
-          let dateObj: Date | null = null;
-          if (typeof dateValue === "number") {
-            dateObj = new Date((dateValue - 25569) * 86400 * 1000);
-          } else {
-            dateObj = new Date(dateValue);
-          }
-          if (dateObj && !isNaN(dateObj.getTime())) {
-            date = dateObj.toISOString().split("T")[0];
-          }
+          date = toISODateString(firstRow[dateField]);
         }
 
         if (timeField && firstRow[timeField]) {
@@ -1258,8 +1224,8 @@ export default function AirportReportsTools() {
       const sheet1 = workbook1.Sheets[workbook1.SheetNames[0]];
       const sheet2 = workbook2.Sheets[workbook2.SheetNames[0]];
 
-      const json1: any[] = XLSX.utils.sheet_to_json(sheet1, { defval: "" });
-      const json2: any[] = XLSX.utils.sheet_to_json(sheet2, { defval: "" });
+      const json1 = sheetToRecords(sheet1).data;
+      const json2 = sheetToRecords(sheet2).data;
 
       // Store raw data for filtering
       setFile1Data(json1);

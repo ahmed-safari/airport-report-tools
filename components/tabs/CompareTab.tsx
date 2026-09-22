@@ -1,6 +1,6 @@
 "use client";
 
-import * as XLSX from "xlsx";
+import { readExcelBuffer } from "@/lib/excel-utils";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -169,11 +169,7 @@ export function CompareTab({
     if (f) {
       try {
         const buf = await f.arrayBuffer();
-        const wb = XLSX.read(buf);
-        const sheet = wb.SheetNames[0];
-        const ws = wb.Sheets[sheet];
-        const json = XLSX.utils.sheet_to_json(ws, { defval: "" });
-        const cols = json.length ? Object.keys(json[0] as any) : [];
+        const { columns: cols } = await readExcelBuffer(buf);
         setColumnsFile1(cols);
       } catch (err) {
         console.error("Failed to read file1 columns", err);
@@ -190,11 +186,7 @@ export function CompareTab({
     if (f) {
       try {
         const buf = await f.arrayBuffer();
-        const wb = XLSX.read(buf);
-        const sheet = wb.SheetNames[0];
-        const ws = wb.Sheets[sheet];
-        const json = XLSX.utils.sheet_to_json(ws, { defval: "" });
-        const cols = json.length ? Object.keys(json[0] as any) : [];
+        const { columns: cols } = await readExcelBuffer(buf);
         setColumnsFile2(cols);
       } catch (err) {
         console.error("Failed to read file2 columns", err);
