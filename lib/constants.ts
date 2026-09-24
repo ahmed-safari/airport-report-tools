@@ -21,6 +21,7 @@ export const DEFAULT_MESSAGE_CONFIG = {
   includeNationality: true,
   includeFlightInfo: true,
   includeTerminal: true,
+  defaultTerminal: "",
   includeHotel: true,
   includeBaggage: true,
   includeRemarks: true,

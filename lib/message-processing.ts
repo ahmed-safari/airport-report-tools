@@ -74,8 +74,11 @@ export const processExcelToMessages = (
       columnMapping.nationality ? row[columnMapping.nationality] || "" : "",
       columnMapping.nationality || "nationality"
     );
+    const sheetTerminal = columnMapping.terminal
+      ? String(row[columnMapping.terminal] ?? "").trim()
+      : "";
     const terminal = cleanup(
-      columnMapping.terminal ? row[columnMapping.terminal] || "VIP" : "VIP",
+      sheetTerminal || messageConfig.defaultTerminal?.trim() || "",
       columnMapping.terminal || "terminal"
     );
     const hotel = cleanup(
@@ -355,7 +358,7 @@ function buildDefaultMessage(
     messageParts.push(`✈️ Flight: ${flight} | ${time}`);
   }
 
-  if (config.includeTerminal) {
+  if (config.includeTerminal && terminal) {
     messageParts.push(`🏢 Terminal: ${terminal}`);
   }
 

@@ -239,6 +239,7 @@ export default function AirportReportsTools() {
     includeNationality: true,
     includeFlightInfo: true,
     includeTerminal: true,
+    defaultTerminal: "",
     includeHotel: true,
     includeBaggage: true,
     includeRemarks: true,
@@ -389,7 +390,10 @@ export default function AirportReportsTools() {
         setMode(savedMode as "arrival" | "departure");
       }
       if (savedMessageConfig) {
-        setMessageConfig(JSON.parse(savedMessageConfig));
+        setMessageConfig({
+          ...DEFAULT_MESSAGE_CONFIG,
+          ...JSON.parse(savedMessageConfig),
+        });
       }
       if (savedExportConfig) {
         setExportConfig(JSON.parse(savedExportConfig));
@@ -748,8 +752,11 @@ export default function AirportReportsTools() {
           columnMapping.nationality ? row[columnMapping.nationality] || "" : "",
           columnMapping.nationality || "nationality"
         );
+        const sheetTerminal = columnMapping.terminal
+          ? String(row[columnMapping.terminal] ?? "").trim()
+          : "";
         const terminal = applyCleanupRules(
-          columnMapping.terminal ? row[columnMapping.terminal] || "VIP" : "VIP",
+          sheetTerminal || messageConfig.defaultTerminal?.trim() || "",
           columnMapping.terminal || "terminal"
         );
         const hotel = applyCleanupRules(
@@ -991,7 +998,7 @@ export default function AirportReportsTools() {
             messageParts.push(`✈️ Flight: ${flight} | ${time}`);
           }
 
-          if (messageConfig.includeTerminal) {
+          if (messageConfig.includeTerminal && terminal) {
             messageParts.push(`🏢 Terminal: ${terminal}`);
           }
 
@@ -2115,31 +2122,51 @@ export default function AirportReportsTools() {
                       ].map((field) => {
                         const Icon = field.icon;
                         return (
-                          <div
-                            key={field.key}
-                            className="flex items-center justify-between"
-                          >
-                            <Label
-                              htmlFor={field.key}
-                              className="flex items-center gap-2 cursor-pointer"
-                            >
-                              <Icon className="h-4 w-4" />
-                              {field.label}
-                            </Label>
-                            <Switch
-                              id={field.key}
-                              checked={
-                                messageConfig[
-                                  field.key as keyof MessageConfig
-                                ] as boolean
-                              }
-                              onCheckedChange={(checked) => {
-                                setMessageConfig((prev) => ({
-                                  ...prev,
-                                  [field.key]: checked,
-                                }));
-                              }}
-                            />
+                          <div key={field.key} className="flex flex-col gap-2">
+                            <div className="flex items-center justify-between">
+                              <Label
+                                htmlFor={field.key}
+                                className="flex items-center gap-2 cursor-pointer"
+                              >
+                                <Icon className="h-4 w-4" />
+                                {field.label}
+                              </Label>
+                              <Switch
+                                id={field.key}
+                                checked={
+                                  messageConfig[
+                                    field.key as keyof MessageConfig
+                                  ] as boolean
+                                }
+                                onCheckedChange={(checked) => {
+                                  setMessageConfig((prev) => ({
+                                    ...prev,
+                                    [field.key]: checked,
+                                  }));
+                                }}
+                              />
+                            </div>
+                            {field.key === "includeTerminal" && (
+                              <div className="flex flex-col gap-1.5 pl-6">
+                                <Label
+                                  htmlFor="default-terminal"
+                                  className="text-xs text-muted-foreground"
+                                >
+                                  Default if the sheet cell is empty
+                                </Label>
+                                <Input
+                                  id="default-terminal"
+                                  value={messageConfig.defaultTerminal || ""}
+                                  placeholder="Leave blank for no terminal"
+                                  onChange={(e) => {
+                                    setMessageConfig((prev) => ({
+                                      ...prev,
+                                      defaultTerminal: e.target.value,
+                                    }));
+                                  }}
+                                />
+                              </div>
+                            )}
                           </div>
                         );
                       })}

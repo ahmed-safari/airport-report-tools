@@ -50,6 +50,7 @@ export type MessageConfig = {
   includeNationality: boolean;
   includeFlightInfo: boolean;
   includeTerminal: boolean;
+  defaultTerminal: string;
   includeHotel: boolean;
   includeBaggage: boolean;
   includeRemarks: boolean;
