@@ -350,7 +350,7 @@ function buildDefaultMessage(
     messageParts.push("");
   }
 
-  if (config.includeNationality && nationality) {
+  if (config.includeNationality) {
     messageParts.push(`🌍 Delegation: ${nationality}`);
   }
 
@@ -358,7 +358,7 @@ function buildDefaultMessage(
     messageParts.push(`✈️ Flight: ${flight} | ${time}`);
   }
 
-  if (config.includeTerminal && terminal) {
+  if (config.includeTerminal) {
     messageParts.push(`🏢 Terminal: ${terminal}`);
   }
 

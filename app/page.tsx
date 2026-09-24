@@ -990,7 +990,7 @@ export default function AirportReportsTools() {
             messageParts.push("");
           }
 
-          if (messageConfig.includeNationality && nationality) {
+          if (messageConfig.includeNationality) {
             messageParts.push(`🌍 Delegation: ${nationality}`);
           }
 
@@ -998,7 +998,7 @@ export default function AirportReportsTools() {
             messageParts.push(`✈️ Flight: ${flight} | ${time}`);
           }
 
-          if (messageConfig.includeTerminal && terminal) {
+          if (messageConfig.includeTerminal) {
             messageParts.push(`🏢 Terminal: ${terminal}`);
           }
 
